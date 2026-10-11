@@ -1,0 +1,16 @@
+# Ollama на своей машине: `ollama pull qwen3:8b` (или gemma3:12b, t-lite). Ключ не нужен. Данные не покидают машину.
+# Запуск: lurker --config configs/ollama.yaml llmcheck ; ключ — в переменной окружения LLM_API_KEY
+llm:
+  base_url: http://localhost:11434/v1
+  model: qwen3:8b
+  api_key_env: LLM_API_KEY
+  temperature: 0.0
+  timeout_s: 300          # 4B на CPU: длинный JSON может занять минуты
+  max_retries: 4
+  batch_size: 15
+  rate_limit_rpm: 0
+  json_mode: false        # грамматика JSON у llama.cpp с Qwen3 даёт пустой {}; без неё модель отвечает JSON в ```-ограждении, парсер снимает
+  max_tokens: 1536
+  extra_body: {"chat_template_kwargs": {"enable_thinking": false}}   # Qwen3: без режима рассуждений
+  strip_thinking: true
+  message_suffix: " /no_think"   # мягкий выключатель рассуждений Qwen3 (работает и без chat_template_kwargs)

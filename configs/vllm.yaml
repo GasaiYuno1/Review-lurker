@@ -1,0 +1,12 @@
+# vLLM / корпоративный шлюз OpenAI-формата: заменить base_url и model, ключ — в LLM_API_KEY.
+# Запуск: lurker --config configs/vllm.yaml llmcheck ; ключ — в переменной окружения LLM_API_KEY
+llm:
+  base_url: http://llm.internal:8000/v1
+  model: Qwen/Qwen3-8B
+  api_key_env: LLM_API_KEY
+  temperature: 0.0
+  timeout_s: 90
+  max_retries: 4
+  batch_size: 15
+  rate_limit_rpm: 0
+  json_mode: true

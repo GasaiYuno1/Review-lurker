@@ -1,0 +1,12 @@
+# Исследование: нейросетевые эмбеддинги, тональность, ноутбуки, локальная LLM для описаний кластеров.
+# torch для CPU (без GPU) ставить отдельно и первым:
+#   python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers>=3.0
+transformers>=4.40
+matplotlib>=3.7
+jupyter
+nbformat
+nbconvert
+# необязательно:
+# bertopic>=0.16                 # класс BERTopic для сравнения «из коробки»; своя схема UMAP→HDBSCAN→c-TF-IDF работает и без него
+# llama-cpp-python[server]       # локальная LLM для названий кластеров (tools/local_llm.sh)

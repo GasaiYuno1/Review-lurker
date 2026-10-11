@@ -1,0 +1,9 @@
+dataset,model,кластеров,корреляция доли негатива,"ошибка, п.п."
+tickets,seara/rubert-tiny2-russian-sentiment,39,0.5,59
+tickets,seara/rubert-base-cased-russian-sentiment,39,0.3,64
+tickets,blanchefort/rubert-base-cased-sentiment,39,0.51,49
+tickets,cointegrated/rubert-tiny-sentiment-balanced,39,0.43,32
+bank,seara/rubert-tiny2-russian-sentiment,19,0.76,31
+bank,seara/rubert-base-cased-russian-sentiment,19,0.89,16
+bank,blanchefort/rubert-base-cased-sentiment,19,0.99,4
+bank,cointegrated/rubert-tiny-sentiment-balanced,19,0.68,40

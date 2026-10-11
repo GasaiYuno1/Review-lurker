@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lurker"
+version = "0.1.0"
+description = "Семантический анализ комментариев к тикетам поддержки"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0", "openpyxl>=3.1", "pyyaml>=6.0", "numpy>=1.24", "scikit-learn>=1.3",
+    "umap-learn>=0.5", "hdbscan>=0.8.33", "pymorphy3>=2.0", "pymorphy3-dicts-ru",
+]
+
+[project.optional-dependencies]
+ner = ["natasha>=1.6"]          # NER для ПД и словарные векторы navec (офлайн, внутри пакета)
+ui = ["streamlit>=1.35", "plotly>=5.20"]
+bertopic = ["bertopic>=0.16"]  # только если нужен именно класс BERTopic; схема UMAP→HDBSCAN→c-TF-IDF есть и без него
+st = ["sentence-transformers>=3.0"]
+
+[project.scripts]
+lurker = "lurker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

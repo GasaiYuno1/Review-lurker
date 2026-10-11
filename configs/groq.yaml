@@ -1,0 +1,12 @@
+# Groq, бесплатный тариф (console.groq.com). Очень быстрый. Лимиты free: ~30 запросов/мин и дневной лимит токенов.
+# Запуск: lurker --config configs/groq.yaml llmcheck ; ключ — в переменной окружения LLM_API_KEY
+llm:
+  base_url: https://api.groq.com/openai/v1
+  model: llama-3.3-70b-versatile
+  api_key_env: LLM_API_KEY
+  temperature: 0.0
+  timeout_s: 90
+  max_retries: 4
+  batch_size: 15
+  rate_limit_rpm: 25
+  json_mode: true

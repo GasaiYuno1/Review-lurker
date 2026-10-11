@@ -1,0 +1,12 @@
+# Cerebras, бесплатный тариф (cloud.cerebras.ai): ~30 запросов/мин, ~1 млн токенов/день.
+# Запуск: lurker --config configs/cerebras.yaml llmcheck ; ключ — в переменной окружения LLM_API_KEY
+llm:
+  base_url: https://api.cerebras.ai/v1
+  model: llama-3.3-70b
+  api_key_env: LLM_API_KEY
+  temperature: 0.0
+  timeout_s: 90
+  max_retries: 4
+  batch_size: 15
+  rate_limit_rpm: 25
+  json_mode: true

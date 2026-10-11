@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Итоги Review-lurker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Макет: одна колонка для чтения ~70 знаков; таблица-вердикт и графики шире колонки текста не выходят. */
+:root {
+  --bg: #f6f7f9;
+  --paper: #ffffff;
+  --fg: #161a22;
+  --muted: #586070;
+  --line: #dde2ea;
+  --accent: #2a78d6;
+  --accent-soft: #e6f0fb;
+  --ok: #1d7a4a;
+  --ok-soft: #e3f3ea;
+  --warn: #9a5b00;
+  --warn-soft: #fbf0dc;
+  --code-bg: #eef1f5;
+  --font-display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --font-body: "Golos Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111419; --paper: #171b22; --fg: #e9ecf1; --muted: #a3abb9; --line: #2a313c;
+    --accent: #3987e5; --accent-soft: #16263b; --ok: #55c08a; --ok-soft: #12291e; --warn: #e3a54a; --warn-soft: #2d2212;
+    --code-bg: #1e242d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111419; --paper: #171b22; --fg: #e9ecf1; --muted: #a3abb9; --line: #2a313c;
+  --accent: #3987e5; --accent-soft: #16263b; --ok: #55c08a; --ok-soft: #12291e; --warn: #e3a54a; --warn-soft: #2d2212;
+  --code-bg: #1e242d; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+  padding-inline: 16px; padding-block: 32px 64px; }
+.wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1, h2 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; letter-spacing: -0.01em; margin: 0; }
+h1 { font-size: clamp(1.7rem, 4.5vw, 2.4rem); line-height: 1.15; }
+h2 { font-size: 1.3rem; line-height: 1.25; }
+h3 { font-size: 1.02rem; font-weight: 600; margin: 0; }
+p { margin: 0; }
+section { display: flex; flex-direction: column; gap: 16px; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lead { font-size: 1.08rem; color: var(--fg); max-width: 66ch; }
+.meta { color: var(--muted); font-size: 0.92rem; max-width: 66ch; }
+header { display: flex; flex-direction: column; gap: 14px; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible, summary:focus-visible, .bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono, code { font-family: var(--font-mono); font-size: 0.86em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+/* вердикты */
+.verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.verdict { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.status { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; font-size: 0.82rem; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px; }
+.status.ok { background: var(--ok-soft); color: var(--ok); }
+.status.partial { background: var(--warn-soft); color: var(--warn); }
+.status svg { width: 14px; height: 14px; }
+.verdict ul { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 6px; }
+.num { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ответы на вопросы ТЗ */
+.qa { display: flex; flex-direction: column; gap: 0; border-top: 1px solid var(--line); }
+.qa > div { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 8px 24px; padding: 14px 0;
+  border-bottom: 1px solid var(--line); }
+.qa dt { font-weight: 600; }
+.qa dd { margin: 0; }
+@media (max-width: 620px) { .qa > div { grid-template-columns: minmax(0, 1fr); } }
+
+/* до/после очистки */
+.ticket { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.ticket figure { margin: 0; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ticket figcaption { font-size: 0.78rem; color: var(--muted); font-family: var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.ticket pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5; }
+.junk { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+
+/* графики: горизонтальные столбики, одна серия */
+.chart { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; display: flex;
+  flex-direction: column; gap: 12px; position: relative; min-width: 0; }
+.chart-title { font-weight: 600; }
+.chart-sub { color: var(--muted); font-size: 0.88rem; margin-top: -8px; }
+.rows { display: flex; flex-direction: column; gap: 10px; }
+.row { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr) 3.2rem; align-items: center; gap: 12px; font-size: 0.92rem; }
+.row .label { color: var(--fg); }
+.track { position: relative; height: 18px; }
+.bar { position: absolute; left: 0; top: 2px; height: 14px; background: var(--accent); border-radius: 0 4px 4px 0; cursor: default; }
+.bar.muted { background: var(--muted); opacity: 0.55; }
+.ref { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px dashed var(--muted); }
+.row .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; font-size: 0.86rem; }
+.axis { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr) 3.2rem; gap: 12px; font-size: 0.76rem; color: var(--muted);
+  font-family: var(--font-mono); }
+.axis .ticks { display: flex; justify-content: space-between; }
+.legend { font-size: 0.82rem; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.legend .dash { width: 18px; border-top: 2px dashed var(--muted); display: inline-block; }
+.tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.8rem; padding: 6px 9px;
+  border-radius: 6px; max-width: 260px; line-height: 1.4; z-index: 2; }
+details { font-size: 0.88rem; color: var(--muted); }
+details table { border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+details td, details th { border-bottom: 1px solid var(--line); padding: 4px 12px 4px 0; text-align: left; }
+@media (max-width: 620px) {
+  .row, .axis { grid-template-columns: minmax(0, 1fr) 3.2rem; }
+  .row .label { grid-column: 1 / -1; }
+  .axis > span:first-child { display: none; }
+}
+
+/* списки и команды */
+ul.clean { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 8px; max-width: 70ch; }
+.cmd { background: var(--code-bg); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+.cmd pre { margin: 0; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.6; white-space: pre; }
+.cmd .c { color: var(--muted); }
+.pain { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.pain div { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pain h3 { font-size: 0.95rem; }
+.pain p { color: var(--muted); font-size: 0.9rem; }
+footer { color: var(--muted); font-size: 0.86rem; border-top: 1px solid var(--line); padding-top: 16px; }
+@media (prefers-reduced-motion: no-preference) { .bar { transition: filter 120ms ease; } .bar:hover { filter: brightness(1.12); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Исследование по ТЗ v2 · открытые данные · 4 ядра CPU, без GPU · локальная LLM</span>
+    <h1>Эмбеддинги для комментариев к тикетам и для поиска косячных звонков</h1>
+    <p class="lead">Проверили две гипотезы заказчика на открытых русских данных. Группировка комментариев работает,
+      если текст очищен от служебного мусора. Поиск аномальных звонков работает частично: по отдельным репликам
+      оператора, а не по звонку целиком.</p>
+    <p class="meta">Настоящих данных не было, поэтому всё проверено на отзывах (banki.ru, Яндекс Карты), синтетических тикетах
+      со скрытой разметкой и диалогах поддержки из ТЗ. Цифры ниже показывают, работает ли подход; на реальных данных их
+      нужно перемерить.</p>
+  </header>
+
+  <section aria-label="Вердикты">
+    <div class="verdicts">
+      <article class="verdict">
+        <span class="eyebrow">Задача 1 · комментарии</span>
+        <span class="status ok"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2"/></svg>Подтверждается</span>
+        <ul>
+          <li>В кластере около <span class="num">1/6</span> чужих текстов; <span class="num">87–90%</span> кластеров чистые.</li>
+          <li>Без очистки качество падает с <span class="num">0.82</span> до <span class="num">0.56</span> (NMI), очистка возвращает его.</li>
+          <li>Всплеск жалоб на домофон в приложении виден по неделям: <span class="num">×7</span> за неделю.</li>
+        </ul>
+      </article>
+      <article class="verdict">
+        <span class="eyebrow">Задача 2 · звонки</span>
+        <span class="status partial"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor"/></svg>Подтверждается частично</span>
+        <ul>
+          <li>Звонок целиком против центра темы: почти случайно (AP <span class="num">0.07</span>).</li>
+          <li>По репликам оператора внутри темы: AP <span class="num">0.37</span>, на другом корпусе <span class="num">0.57</span>.</li>
+          <li>Из 40 самых подозрительных звонков контролёру стоит посмотреть <span class="num">29</span>.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Задача 1</span>
+    <h2>Комментарии: ответы на вопросы ТЗ</h2>
+    <dl class="qa">
+      <div><dt>Похожие комментарии в одной группе?</dt>
+        <dd>Да. На отзывах Яндекс Карт 77% отзывов одной рубрики попадают в один кластер (модель USER-base). На коротких тикетах
+          лучше USER-bge-m3: NMI 0.86 против 0.80 у остальных.</dd></div>
+      <div><dt>Сколько нерелевантных в кластере?</dt>
+        <dd>Около шестой части: 17% на отзывах, 13–16% на тикетах. На отзывах о банках, где меток нет, прочитали 180 случайных
+          текстов: 80% подходят под описание своего кластера.</dd></div>
+      <div><dt>Можно ли понятно описать кластер?</dt>
+        <dd>Да, локальная модель Qwen3-4B по 20 текстам кластера: 38 из 39 названий совпали с настоящей темой. Названия нужно
+          проверять глазами, а её оценке «насколько кластер однородный» верить нельзя.</dd></div>
+      <div><dt>Насколько важна предобработка?</dt>
+        <dd>Сильно. Ссылка, имя и телефон в каждом тексте меняют 80% ближайших соседей текста. Формат SMM («ссылка, переписка,
+          персональные данные») заставляет модель группировать тексты по формату, а не по смыслу.</dd></div>
+    </dl>
+
+    <div class="ticket" aria-label="Пример очистки">
+      <figure>
+        <figcaption>Тикет SMM как есть (условный пример)</figcaption>
+        <pre><span class="junk">https://vk.com/wall-000000_00000?reply=0
+Переписка:</span>
+<span class="junk">Клиент:</span> как заказать ключи от домофона?
+<span class="junk">Мы: Добрый день! Уже передали специалистам, вернёмся с ответом.
+Клиент: +7 (900) 000-00-00, перезвоните
+Иванов Иван Иванович, ул. Примерная, д. 1</span></pre>
+      </figure>
+      <figure>
+        <figcaption>После очистки (в эмбеддинг)</figcaption>
+        <pre>как заказать ключи от домофона?</pre>
+      </figure>
+    </div>
+
+    <div class="chart" id="chart-clean">
+      <span class="chart-title">Качество кластеров при разной предобработке</span>
+      <span class="chart-sub">Отзывы Яндекс Карт, 12 рубрик, модель USER-base. NMI с рубриками: 1 — кластеры совпадают с рубриками.</span>
+      <div class="rows" data-max="1" data-ref="0.82" data-ref-label="исходный текст без мусора, 0.82"></div>
+      <div class="legend"><span class="dash"></span>исходный текст без мусора</div>
+      <details><summary>Таблица</summary><table></table></details>
+    </div>
+    <p class="meta">Правила очистки знают только те форматы, под которые написаны: незнакомую выгрузку CRM они не вычистили.
+      Удаление фраз, повторяющихся во многих тикетах, от формата не зависит и возвращает большую часть качества. Перед запуском на
+      реальных данных очистку стоит проверить на 50–100 тикетах каждого отдела.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Задача 1 · что важно заказчику</span>
+    <h2>Динамика, новые темы, необычное, тональность</h2>
+    <ul class="clean">
+      <li><strong>«Стали ли чаще жаловаться на домофон в приложении?»</strong> Кластеры, посчитанные по неделям, нашли 5 из 7
+        событий, заложенных в тикеты при генерации: мартовский всплеск жалоб на домофон (×7 за неделю), рост ошибок оплаты,
+        угроз и расторжений, зимний сезон низкой скорости.</li>
+      <li><strong>Какие темы появляются.</strong> Маленькую новую тему кластеры пропускают. Отдельный поиск по месяцам
+        («тексты месяца против всего прошлого») находит её в первый же месяц, а ложных «новых тем» за шесть месяцев не даёт.</li>
+      <li><strong>Какие необычные проблемы встречаются.</strong> Подмешанные 50 необычных обращений («роутер искрит», «домофон
+        сам открывает дверь ночью») находятся с AP 0.86, обычные обращения того же автора не всплывают. На настоящих отзывах
+        список самых необычных стоит читать, а не принимать на веру: среди 20 первых 4 действительно необычные ситуации.</li>
+      <li><strong>Что положительного и отрицательного пишут.</strong> На словах клиентов готовая модель тональности даёт долю
+        негатива по кластерам почти точно (корреляция 0.99 с рейтингом). На заметках операторов («абонент недоволен, угрожает…»)
+        такие модели ошибаются; там тон кластера лучше брать из описания LLM.</li>
+    </ul>
+    <p class="meta">Карта боли на отзывах о банках, если убрать из текста названия банков и разделить крупные кластеры второй
+      ступенью (раньше 4 кластера собирались по бренду, а благодарности занимали 36% корпуса одним кластером; теперь крупнейший кластер 10%):</p>
+    <div class="pain">
+      <div><h3>Жалобы</h3><p>Переводы и зависшие деньги · доставка карты · сотрудники и приложение · досрочное погашение ипотеки ·
+        акции и бонусы · комиссии · закрытие счетов · кредиты со страховками</p></div>
+      <div><h3>Благодарности</h3><p>Консультации · вклады · карта и приложение · счета для бизнеса</p></div>
+    </div>
+    <p class="meta"><strong>Почему в MVP были шумные кластеры.</strong> Настройки BERTopic по умолчанию дробят 25 тем коротких
+      тикетов на 102 кластера и отправляют 8% текстов в «выбросы». Работает UMAP с HDBSCAN, настроенные под объём, и
+      распределение выбросов по ближайшим кластерам. На 40 тысячах тикетов вдобавок нужно сливать близкие кластеры.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Задача 2</span>
+    <h2>Аномальные звонки</h2>
+    <p style="max-width:66ch">Звонок целиком нечувствителен к одной чужой фразе: звонок, в котором 40% реплик заменены куском
+      другого разговора, ближе к своей исходной версии, чем два обычных звонка одной темы друг к другу. Работает другое:
+      каждую реплику оператора сравниваем с репликами других операторов на ту же тему, и звонок оценивается по самой чужой.</p>
+    <div class="chart" id="chart-calls">
+      <span class="chart-title">Насколько хорошо находятся подмешанные аномалии</span>
+      <span class="chart-sub">Средняя точность ранжирования (AP). Аномалий 6% звонков, поэтому случайный порядок даёт 0.06.</span>
+      <div class="rows" data-max="0.6" data-ref="0.06" data-ref-label="случайный порядок, 0.06"></div>
+      <div class="legend"><span class="dash"></span>случайный порядок</div>
+      <details><summary>Таблица</summary><table></table></details>
+    </div>
+    <ul class="clean">
+      <li><strong>Ручная проверка.</strong> 40 самых подозрительных звонков прочитаны вслепую: все 21 подмешанная аномалия видны
+        глазами, и ещё 8 оказались реально спорными звонками из исходных данных (некомпетентность, доплата задним числом,
+        «документы подгоняем под тендер»).</li>
+      <li><strong>Шум распознавания речи</strong> («дмфон», слипшиеся слова) почти не даёт ложных тревог: среди 120 самых подозрительных звонков таких 4%, в данных их 8%.</li>
+      <li><strong>Подмену куска разговора</strong> основная оценка ловит хуже всего. Отдельный сигнал «реплика ближе к чужой
+        теме» ловит её вдвое лучше, но в одной оценке с основной проигрывает; его стоит вести вторым списком.</li>
+      <li><strong>Не видно</strong> то, что не выражено одной репликой: например, оператор просто не сделал нужного действия.</li>
+    </ul>
+    <p class="meta"><strong>Рекомендация.</strong> Модель USER-base. Режим: ежедневный список топ-N на проверку контролёру, а не
+      автоматическое наказание. Порог лучше задавать объёмом, который контролёры успевают проверить (например, 50 звонков в
+      день): доля помеченных при фиксированном пороге зависит от потока (3.5% и 6.1% на двух корпусах). Если аномалий около
+      1%, проблемным будет примерно каждый шестой звонок из списка, в 16 раз чаще, чем в случайной выборке.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Запуск</span>
+    <h2>Как прогнать на своих данных</h2>
+    <p class="meta">Всё работает внутри контура: эмбеддинги и тональность считаются локально, названия кластеров даёт локальная
+      или корпоративная LLM. 40 тысяч коротких тикетов на 4 ядрах обрабатываются за 35–55 минут, 3000 звонков — за 10–30 минут.</p>
+    <div class="cmd"><pre><span class="c"># комментарии: кластеры, названия, тональность, динамика, новые темы, необычное</span>
+python3 research/run_comments.py tickets.xlsx --text "Комментарий" --date "Дата" \
+        --llm configs/llamacpp.yaml --sentiment --merge 0.8
+
+<span class="c"># звонки: топ подозрительных с самой чужой репликой оператора</span>
+python3 research/run_calls.py calls.csv --text "Расшифровка" --id "ID"</pre></div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Ограничения</span>
+    <h2>Что проверено не до конца</h2>
+    <ul class="clean">
+      <li>Данные открытые и синтетические, мусор и форматы выгрузок имитированы. Очистку на реальной выгрузке придётся проверить
+        и, скорее всего, донастроить.</li>
+      <li>Звонки письменные, а не расшифровки, аномалии искусственные. На реальных расшифровках цифры нужно перемерить.</li>
+      <li>Ручные проверки делал разработчик, а не аналитик или контролёр заказчика.</li>
+      <li>Банковские диалоги из ТЗ для проверки звонков не подошли: это 4 шаблонные пары «вопрос — ответ», повторённые по кругу
+        (смотрели первые 100 строк). Других открытых диалогов банковской поддержки на русском не нашлось. Отзывы о телефонах
+        не брали, в них нет меток темы.</li>
+    </ul>
+    <p class="meta"><strong>Что нужно для следующего шага:</strong> выгрузка 50–100 настоящих тикетов от каждого отдела (для
+      проверки очистки) и несколько сотен расшифровок звонков с пометками контролёров (для калибровки порога).</p>
+  </section>
+
+  <footer>Код, ноутбуки и полный отчёт: репозиторий <a href="https://github.com/GasaiYuno1/review-lurker">GasaiYuno1/review-lurker</a>,
+    файлы <span class="mono">research/REPORT.md</span>, <span class="mono">research/01_comments_clustering.ipynb</span>,
+    <span class="mono">research/02_anomalous_calls.ipynb</span>.</footer>
+</div>
+
+<script>
+(function () {
+  var data = {
+    "chart-clean": [
+      ["Исходный текст", 0.82, "Отзывы как есть, без мусора"],
+      ["Ссылка, имя, телефон в каждом", 0.66, "Ровно просьба ТЗ: в каждом отзыве ссылка, имя и номер из 9–11 цифр"],
+      ["То же + 40% в формате SMM", 0.56, "Переписка с шаблонными ответами оператора и блоком персональных данных"],
+      ["После очистки", 0.82, "Правила + распознавание имён: качество как у исходного текста"],
+      ["Незнакомая выгрузка CRM, правила", 0.67, "Форматы, под которые правила не писались"],
+      ["Она же + удаление шаблонов", 0.78, "Фразы и служебные строки, повторяющиеся во многих текстах, вырезаны"]
+    ],
+    "chart-calls": [
+      ["Звонок целиком (схема ТЗ)", 0.07, "Расстояние эмбеддинга всего звонка до центра его темы"],
+      ["Реплики оператора внутри темы", 0.37, "95% интервал 0.30–0.47; основной корпус, 2087 звонков"],
+      ["То же на другом корпусе", 0.57, "Russian MultiWOZ, 3000 диалогов; ничего не подбиралось"]
+    ]
+  };
+  Object.keys(data).forEach(function (id) {
+    var box = document.getElementById(id), rows = box.querySelector(".rows");
+    var max = parseFloat(rows.dataset.max), ref = parseFloat(rows.dataset.ref);
+    var tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; box.appendChild(tip);
+    data[id].forEach(function (d) {
+      var row = document.createElement("div"); row.className = "row";
+      var label = document.createElement("span"); label.className = "label"; label.textContent = d[0];
+      var track = document.createElement("div"); track.className = "track";
+      var bar = document.createElement("div"); bar.className = "bar"; bar.style.width = (100 * d[1] / max) + "%";
+      bar.tabIndex = 0; bar.setAttribute("role", "img"); bar.setAttribute("aria-label", d[0] + ": " + d[1].toFixed(2));
+      var refEl = document.createElement("div"); refEl.className = "ref"; refEl.style.left = (100 * ref / max) + "%";
+      track.appendChild(bar); track.appendChild(refEl);
+      var val = document.createElement("span"); val.className = "val"; val.textContent = d[1].toFixed(2);
+      row.appendChild(label); row.appendChild(track); row.appendChild(val); rows.appendChild(row);
+      function show() {
+        tip.textContent = d[0] + " — " + d[1].toFixed(2) + ". " + d[2];
+        tip.hidden = false;
+        var b = bar.getBoundingClientRect(), c = box.getBoundingClientRect();
+        var left = Math.min(Math.max(b.right - c.left - 120, 8), c.width - 270);
+        tip.style.left = Math.max(left, 8) + "px"; tip.style.top = (b.bottom - c.top + 8) + "px";
+      }
+      function hide() { tip.hidden = true; }
+      bar.addEventListener("mouseenter", show); bar.addEventListener("focus", show);
+      bar.addEventListener("mouseleave", hide); bar.addEventListener("blur", hide);
+    });
+    var axis = document.createElement("div"); axis.className = "axis";
+    var ticks = [0, max / 2, max].map(function (t) { return "<span>" + t.toFixed(1) + "</span>"; }).join("");
+    axis.innerHTML = "<span></span><div class=\"ticks\">" + ticks + "</div><span></span>";
+    rows.after(axis);
+    var table = box.querySelector("table");
+    table.innerHTML = "<tr><th>Вариант</th><th>Значение</th><th>Пояснение</th></tr>" + data[id].map(function (d) {
+      return "<tr><td>" + d[0] + "</td><td>" + d[1].toFixed(2) + "</td><td>" + d[2] + "</td></tr>";
+    }).join("");
+  });
+})();
+</script>
+</body>
+</html>

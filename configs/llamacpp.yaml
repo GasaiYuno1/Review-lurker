@@ -1,0 +1,16 @@
+# llama.cpp server (python -m llama_cpp.server --model model.gguf --port 8080, см. tools/local_llm.sh). Ключ не нужен.
+# Запуск: lurker --config configs/llamacpp.yaml llmcheck ; ключ — в переменной окружения LLM_API_KEY
+llm:
+  base_url: http://localhost:8080/v1
+  model: local
+  api_key_env: LLM_API_KEY
+  temperature: 0.0
+  timeout_s: 300          # 4B на CPU: длинный JSON может занять минуты
+  max_retries: 4
+  batch_size: 15
+  rate_limit_rpm: 0
+  json_mode: false        # грамматика JSON у llama.cpp с Qwen3 даёт пустой {}; без неё модель отвечает JSON в ```-ограждении, парсер снимает
+  max_tokens: 1536
+  extra_body: {"chat_template_kwargs": {"enable_thinking": false}}   # Qwen3: без режима рассуждений (быстрее, ответ сразу JSON)
+  strip_thinking: true
+  message_suffix: " /no_think"   # мягкий выключатель рассуждений Qwen3 (работает и без chat_template_kwargs)

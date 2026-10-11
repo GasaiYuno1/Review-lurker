@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.cache/
+.venv/
+build/
+config.yaml
+.streamlit/secrets.toml
+*.egg-info/
+*.pkl
+data/research/
+build/
+
+# реальные данные заказчика — не в git
+data/mock/
