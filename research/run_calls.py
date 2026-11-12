@@ -50,8 +50,9 @@ def stt_norm(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s-]", " ", text.lower())).strip()
 
 
-def embed(texts: list[str], model: str, cache_dir: Path, what: str) -> np.ndarray:
-    """Эмбеддинги уникальных текстов (реплики вроде «да», «угу», приветствия повторяются тысячи раз) с кэшем на диске."""
+def embed(texts: list[str], model: str, cache_dir: Path, what: str, chunk: int = 50_000) -> np.ndarray:
+    """Эмбеддинги уникальных текстов (реплики вроде «да», «угу», приветствия повторяются тысячи раз) с кэшем на диске.
+    Кэш пишется кусками по `chunk` текстов: прерванный прогон при повторном запуске продолжается с места остановки."""
     uniq, inv = np.unique(np.asarray(texts, dtype=object), return_inverse=True)
     uniq = uniq.tolist()
     h = hashlib.sha1("\n".join(uniq).encode("utf-8")).hexdigest()[:12]
@@ -59,8 +60,21 @@ def embed(texts: list[str], model: str, cache_dir: Path, what: str) -> np.ndarra
     if p.exists():
         return np.load(p)[inv]
     t = time.time()
-    E = get_embedder(model).fit(uniq).encode(uniq).astype(np.float32)
+    enc = get_embedder(model).fit(uniq)
+    parts = []
+    for i, a in enumerate(range(0, len(uniq), chunk)):
+        pp = cache_dir / f"emb_{what}_{model}_{h}.part{i:03d}.npy"
+        if pp.exists():
+            parts.append(np.load(pp))
+            continue
+        parts.append(enc.encode(uniq[a:a + chunk]).astype(np.float32))
+        np.save(pp, parts[-1])
+        if len(uniq) > chunk:
+            print(f"  {what}: {min(a + chunk, len(uniq))} из {len(uniq)} ({time.time() - t:.0f} с)", flush=True)
+    E = np.concatenate(parts) if parts else np.zeros((0, 1), dtype=np.float32)
     np.save(p, E)
+    for pp in cache_dir.glob(f"emb_{what}_{model}_{h}.part*.npy"):
+        pp.unlink()
     print(f"эмбеддинги {what} {model}: {len(uniq)} уникальных из {len(texts)} за {time.time() - t:.0f} с", flush=True)
     return E[inv]
 

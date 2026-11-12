@@ -194,6 +194,26 @@ class RunScriptsTests(unittest.TestCase):
             self.assertIn(rude, sc["id"].head(3).tolist())
             self.assertIn("идиот", sc.set_index("id").loc[rude, "worst_operator_turn"])
 
+    def test_run_calls_embed_resumes_from_chunks(self):
+        mod = load_script("run_calls")
+        words = ["вечером", "утром", "снова", "опять", "второй день", "после грозы", "у соседей тоже", "срочно"]
+        texts = [f"{p} {w}" for ph in TOPICS.values() for p in ph for w in words] * 2      # 120 уникальных, каждая дважды
+        with tempfile.TemporaryDirectory() as tmp:
+            one, many, resumed = (Path(tmp) / x for x in ("one", "many", "resumed"))
+            for d in (one, many, resumed):
+                d.mkdir()
+            ref = mod.embed(texts, "tfidf", one, "t", chunk=10_000)
+            np.testing.assert_allclose(mod.embed(texts, "tfidf", many, "t", chunk=25), ref, atol=1e-6)
+            self.assertEqual(list(many.glob("*.part*.npy")), [])           # куски убраны после сборки
+            # прерванный прогон: первый кусок уже на диске — берётся оттуда, а не считается заново
+            h = next(one.glob("emb_t_tfidf_*.npy")).stem.split("_")[-1]
+            np.save(resumed / f"emb_t_tfidf_{h}.part000.npy", np.zeros((25, ref.shape[1]), dtype=np.float32))
+            got = mod.embed(texts, "tfidf", resumed, "t", chunk=25)
+            uniq = sorted(set(texts))
+            first = {u for u in uniq[:25]}
+            m = np.array([x in first for x in texts])
+            self.assertTrue(np.all(got[m] == 0))
+            np.testing.assert_allclose(got[~m], ref[~m], atol=1e-6)
 
 if __name__ == "__main__":
     unittest.main()
