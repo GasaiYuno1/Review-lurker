@@ -115,13 +115,14 @@ class RunScriptsTests(unittest.TestCase):
         for topic, phrases in TOPICS.items():
             for i in range(30):
                 rows.append({"Комментарий": f"{rnd.choice(phrases)}, {rnd.choice(phrases)}. тел 8{rnd.randint(10**9, 10**10 - 1)} "
-                                            f"https://vk.com/id{rnd.randint(1, 10**6)}", "Дата": f"{1 + i % 28:02d}.0{1 + i % 3}.2026"})
+                                            f"https://vk.com/id{rnd.randint(1, 10**6)}", "Дата": f"{1 + i % 28:02d}.0{1 + i % 3}.2026",
+                             "Тема": topic})
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "t.csv"
             pd.DataFrame(rows).to_csv(src, index=False)
             llm = FakeLLM(json.dumps({"название": "Жалобы на связь", "описание": "Описание", "тональность": "негатив"}, ensure_ascii=False))
             rc = load_script("run_comments").main([str(src), "--text", "Комментарий", "--date", "Дата", "--model", "tfidf",
-                                                   "--mcs", "10", "--out", tmp], llm=llm)
+                                                   "--mcs", "10", "--out", tmp, "--label", "Тема"], llm=llm)
             self.assertEqual(rc, 0)
             cl = pd.read_csv(Path(tmp) / "clusters.csv")
             asg = pd.read_csv(Path(tmp) / "assignments.csv")
@@ -131,6 +132,10 @@ class RunScriptsTests(unittest.TestCase):
             self.assertEqual(llm.calls, len(cl))
             for f in ("manual_check.csv", "dynamics.csv", "clusters.md", "boilerplate.csv", "unusual.csv", "new_topics.csv"):
                 self.assertTrue((Path(tmp) / f).exists(), f)
+            met = pd.read_csv(Path(tmp) / "label_metrics.csv")
+            self.assertEqual(met["label"].tolist(), ["Тема"])
+            self.assertGreater(met["nmi"].iloc[0], 0.5)
+            self.assertTrue(set(cl["label_top"]) <= set(TOPICS))
 
     def test_run_calls_finds_rude_operator(self):
         rnd = random.Random(1)
@@ -157,6 +162,37 @@ class RunScriptsTests(unittest.TestCase):
             self.assertIn(rude, sc["id"].head(3).tolist())
             self.assertIn("идиот", sc.set_index("id").loc[rude, "worst_operator_turn"])
             self.assertIn(rude, (Path(tmp) / "top.md").read_text(encoding="utf-8"))
+
+    def test_run_calls_swapped_roles_topic_column_and_repeated_ids(self):
+        """Метки говорящих перепутаны (оператор под «Клиент:»), темы — из колонки, на звонок по две строки."""
+        rnd = random.Random(2)
+        answers = {"домофон": ["оформил заявку на ремонт домофона мастер придёт завтра", "ключ можно забрать в офисе"],
+                   "интернет": ["перезагрузите роутер и проверьте кабель", "оформил выезд мастера по интернету"],
+                   "оплата": ["сделал перерасчёт вернём на счёт", "квитанцию отправил на почту"]}
+        rows = []
+        for topic, phrases in TOPICS.items():
+            for i in range(25):
+                text = (f"Клиент: здравствуйте меня зовут анна чем могу помочь\nОператор: {rnd.choice(phrases)}\n"
+                        f"Клиент: {rnd.choice(answers[topic])}\nОператор: спасибо")
+                rows += [{"id": f"{topic}-{i}", "text": text, "Тема": topic, "Дата": "01.09.2026"}] * 2
+        rude = "оплата-3"
+        for r in rows:
+            if r["id"] == rude:
+                r["text"] = r["text"] + "\nКлиент: сами виноваты идиот отстаньте от меня со своим барахлом"
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "c.csv"
+            pd.DataFrame(rows).to_csv(src, index=False)
+            rc = load_script("run_calls").main([str(src), "--text", "text", "--id", "id", "--model", "tfidf", "--out", tmp,
+                                                "--roles", "auto", "--topic", "Тема", "--min-topic", "10", "--center-on", "op",
+                                                "--keep", "Дата"])
+            self.assertEqual(rc, 0)
+            sc = pd.read_csv(Path(tmp) / "calls_scored.csv")
+            self.assertEqual(len(sc), 75)
+            self.assertTrue(sc["roles_swapped"].all())
+            self.assertEqual(set(sc["topic_keywords"]), set(TOPICS))
+            self.assertIn("Дата", sc.columns)
+            self.assertIn(rude, sc["id"].head(3).tolist())
+            self.assertIn("идиот", sc.set_index("id").loc[rude, "worst_operator_turn"])
 
 
 if __name__ == "__main__":

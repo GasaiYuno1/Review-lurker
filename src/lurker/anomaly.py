@@ -42,6 +42,26 @@ def split_dialog(text: str, op_labels: Sequence[str] = OP_LABELS, client_labels:
     return out
 
 
+# Фразы, которые говорит оператор, а не клиент: по ним определяется, кто есть кто, когда метки говорящих в расшифровке
+# перепутаны (STT размечает каналы, а не роли: в выгрузке с метками operator/subscriber операторские фразы стояли у
+# subscriber в ~65% звонков).
+OP_MARKERS = re.compile(
+    r"меня зовут|чем (?:я )?(?:могу|можем) (?:вам )?помочь|оставайтесь на линии|(?:спасибо|благодарю) за ожидание|"
+    r"ожидайте,? (?:пожалуйста,? )?на линии|по какому вопросу|подскажите,? (?:пожалуйста,? )?(?:номер|адрес)|"
+    r"номер (?:вашего )?договора", re.IGNORECASE)
+
+
+def fix_roles(turns: Sequence[tuple[str, str]], markers: re.Pattern = OP_MARKERS) -> tuple[list[tuple[str, str]], bool]:
+    """Если операторских фраз (`markers`) больше в репликах «клиента», чем «оператора», — роли в звонке поменять местами.
+    → (реплики, поменяны ли). Меняет только звонок целиком: перемешанные внутри звонка метки так не исправить."""
+    hits = {"op": 0, "cl": 0}
+    for s, x in turns:
+        hits[s] += bool(markers.search(x))
+    if hits["cl"] > hits["op"]:
+        return [("cl" if s == "op" else "op", x) for s, x in turns], True
+    return list(turns), False
+
+
 def center(E: np.ndarray) -> np.ndarray:
     """Вычесть средний вектор корпуса и нормировать заново. Эмбеддинги однотипных текстов (реплики звонков в поддержку)
     сильно сонаправлены — общий «жанровый» компонент забивает смысловые различия; центрирование их проявляет."""
@@ -115,7 +135,8 @@ def lof_score(E: np.ndarray, topics: np.ndarray, k: int = 15) -> np.ndarray:
 
 def turn_novelty(T: np.ndarray, turn_doc: np.ndarray, doc_topics: np.ndarray, k: int = 10, block: int = 2048) -> np.ndarray:
     """Новизна каждой реплики: 1 − среднее сходство с k ближайшими репликами из ДРУГИХ звонков той же темы.
-    Считается блоками по `block` реплик — память O(block × размер темы), а не квадрат темы."""
+    Считается блоками по `block` реплик (для больших тем блок меньше: матрица блока — не больше ~5·10⁷ чисел) —
+    память O(block × размер темы), а не квадрат темы."""
     T = np.asarray(T, dtype=np.float32)
     turn_doc = np.asarray(turn_doc)
     turn_topic = np.asarray(doc_topics)[turn_doc]
@@ -126,13 +147,14 @@ def turn_novelty(T: np.ndarray, turn_doc: np.ndarray, doc_topics: np.ndarray, k:
             continue
         kk = max(1, min(k, len(idx) - 1))
         Tt, dt = T[idx], turn_doc[idx]
-        for a in range(0, len(idx), block):
-            S = Tt[a:a + block] @ Tt.T
-            S[dt[a:a + block, None] == dt[None, :]] = -np.inf
-            best = -np.sort(-S, axis=1)[:, :kk]
+        blk = max(16, min(block, int(5e7 // len(idx))))
+        for a in range(0, len(idx), blk):
+            S = Tt[a:a + blk] @ Tt.T
+            S[dt[a:a + blk, None] == dt[None, :]] = -np.inf
+            best = np.partition(S, S.shape[1] - kk, axis=1)[:, -kk:]      # k наибольших (порядок не важен — дальше среднее)
             best[~np.isfinite(best)] = np.nan
             with np.errstate(all="ignore"):
-                ts[idx[a:a + block]] = 1.0 - np.nan_to_num(np.nanmean(best, axis=1), nan=0.0)
+                ts[idx[a:a + blk]] = 1.0 - np.nan_to_num(np.nanmean(best, axis=1), nan=0.0)
     return ts
 
 

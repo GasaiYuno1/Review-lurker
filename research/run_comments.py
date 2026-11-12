@@ -5,7 +5,7 @@
 
 python3 research/run_comments.py tickets.xlsx --text "Комментарий" [--date "Дата"] [--model user-bge-m3] [--mcs 0]
         [--llm configs/llamacpp.yaml] [--describe 30] [--out build/run_comments] [--no-clean]
-        [--split-large 0.15] [--merge 0.8] [--mask configs/mask_banks.txt] [--sentiment]
+        [--split-large 0.15] [--merge 0.8] [--mask configs/mask_banks.txt] [--sentiment] [--label "сервис,признак"]
 Крупные кластеры (> 15% корпуса — обычно «мешок» благодарностей или общих жалоб) делятся второй ступенью. --mask
 удаляет названия брендов до эмбеддингов: без этого отзывы об одном банке/продукте собираются в свой
 кластер независимо от темы (research/comments/bank_brands.py).
@@ -18,7 +18,9 @@ python3 research/run_comments.py tickets.xlsx --text "Комментарий" [-
   new_topics.csv   — (если задан --date) кандидаты в новые темы по месяцам: группы комментариев, не похожих на прошлые;
   unusual.csv      — самые необычные комментарии (непохожи на все остальные) — список на прочтение;
   clusters.md      — то же читаемым отчётом;
-  boilerplate.csv  — что удалено как шаблон (фразы и служебные метки, повторяющиеся во многих текстах) — проверить глазами.
+  boilerplate.csv  — что удалено как шаблон (фразы и служебные метки, повторяющиеся во многих текстах) — проверить глазами;
+  label_metrics.csv — (если задан --label) кластеры против готовой разметки: NMI, ARI, чистота, B³ — по каждой колонке;
+                     в clusters.csv тогда же главная метка кластера (по первой колонке) и её доля.
 Реальные данные — только в локальную LLM (llama.cpp/Ollama) или корпоративный endpoint, не во внешние API.
 """
 from __future__ import annotations
@@ -89,6 +91,8 @@ def main(argv=None, llm=None) -> int:
     ap.add_argument("--out", default=str(ROOT / "build" / "run_comments"))
     ap.add_argument("--unusual", type=int, default=50, help="сколько самых необычных комментариев выписать в unusual.csv")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--label", help="колонки с готовой разметкой через запятую (например «сервис,признак»): метрики "
+                                    "кластеров против неё и главная метка каждого кластера")
     a = ap.parse_args(argv)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -97,6 +101,10 @@ def main(argv=None, llm=None) -> int:
     df = load_table(a.file)
     if a.text not in df.columns:
         raise SystemExit(f"нет колонки «{a.text}»; есть: {', '.join(df.columns)}")
+    lab_cols = [c.strip() for c in (a.label or "").split(",") if c.strip()]
+    for c in lab_cols:
+        if c not in df.columns:
+            raise SystemExit(f"нет колонки «{c}»; есть: {', '.join(df.columns)}")
     raw = df[a.text].fillna("").astype(str).tolist()
     t = time.time()
     if a.no_clean:
@@ -132,6 +140,18 @@ def main(argv=None, llm=None) -> int:
     print(f"кластеров {len(res.topics)}, прочее {res.n_outliers}, кластеризация {time.time() - t:.0f} с", flush=True)
     labels = np.full(len(texts), -1)
     labels[ok] = res.labels
+    if lab_cols:
+        from lurker.cluster import evaluate
+        met = []
+        for c in lab_cols:
+            m = ok & df[c].notna().to_numpy()
+            r = {"label": c, "n": int(m.sum()), "n_labels": int(df[c][m].nunique())}
+            r.update(evaluate(labels[m], df[c][m].astype(str).tolist()))
+            met.append(r)
+            print(f"против «{c}» ({r['n_labels']} меток): NMI {r['nmi']:.3f}, чистота {r['purity']:.3f}, "
+                  f"B³-P {r['bcubed_p']:.3f}, B³-R {r['bcubed_r']:.3f}", flush=True)
+        pd.DataFrame(met).to_csv(out / "label_metrics.csv", index=False)
+        lab0 = df[lab_cols[0]].to_numpy()[ok]
     tone = None
     if a.sentiment:
         from lurker.sentiment import CLASSES, predict_sentiment
@@ -149,6 +169,10 @@ def main(argv=None, llm=None) -> int:
         idx = np.where(res.labels == tp.id)[0]
         rec = {"cluster": tp.id, "size": tp.size, "share": round(tp.size / len(texts), 4), "keywords": ", ".join(tp.keywords[:8]),
                "name": "", "description": "", "sentiment": ""}
+        if lab_cols:
+            vc = pd.Series(lab0[idx]).dropna().value_counts()
+            rec["label_top"] = vc.index[0] if len(vc) else ""
+            rec["label_share"] = round(float(vc.iloc[0] / vc.sum()), 3) if len(vc) else 0.0
         if tone is not None:
             rec["negative_share"] = round(float((tone[idx] == "neg").mean()), 3)
             rec["positive_share"] = round(float((tone[idx] == "pos").mean()), 3)
@@ -185,6 +209,8 @@ def main(argv=None, llm=None) -> int:
     for r in rows:
         md += [f"## {r['name'] or r['keywords']} — {r['size']} ({r['share']:.1%})", "",
                f"Ключевые слова: {r['keywords']}", ""] + ([r["description"], ""] if r["description"] else [])
+        if r.get("label_top"):
+            md += [f"Главная метка «{lab_cols[0]}»: {r['label_top']} ({r['label_share']:.0%})", ""]
         if "negative_share" in r:
             md += [f"Тональность: негатив {r['negative_share']:.0%}, позитив {r['positive_share']:.0%}", ""]
         md += [f"> {r[k]}" for k in ("example_1", "example_2", "example_3") if r.get(k)] + [""]

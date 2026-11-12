@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from lurker.anomaly import (assign_topics, centroid_score, coherence_score, knn_score, lof_score, offtopic_score, precision_at_k,  # noqa: E402
-                            ranking_metrics, recall_at_k, relevance_score, robust_z, turn_score)
+from lurker.anomaly import (assign_topics, centroid_score, coherence_score, fix_roles, knn_score, lof_score, offtopic_score,  # noqa: E402
+                            precision_at_k, ranking_metrics, recall_at_k, relevance_score, robust_z, turn_novelty, turn_score)
 
 
 def unit(M):
@@ -88,6 +88,33 @@ class AnomalyTests(unittest.TestCase):
         self.assertAlmostEqual(m["auc"], 5 / 6)   # отрицательный 0.8 стоит выше положительного 0.7
         z = robust_z(np.array([1.0, 1.1, 0.9, 1.0, 5.0]), np.zeros(5))
         self.assertGreater(z[-1], 10)
+
+
+    def test_turn_novelty_small_blocks_match_reference(self):
+        rng = np.random.default_rng(1)
+        T = unit(rng.normal(size=(400, 16)).astype(np.float32))
+        doc = np.repeat(np.arange(80), 5)
+        topics = np.arange(80) % 3
+        ref = np.zeros(len(T))                       # эталон: полная сортировка, без блоков
+        tt = topics[doc]
+        for t in np.unique(tt):
+            idx = np.where(tt == t)[0]
+            S = T[idx] @ T[idx].T
+            S[doc[idx, None] == doc[None, idx]] = -np.inf
+            ref[idx] = 1.0 - (-np.sort(-S, axis=1)[:, :10]).mean(axis=1)
+        np.testing.assert_allclose(turn_novelty(T, doc, topics, k=10, block=7), ref, atol=1e-5)
+
+    def test_fix_roles_swaps_mislabeled_call(self):
+        call = [("cl", "добрый день меня зовут анна чем могу помочь"), ("op", "у меня интернет не работает"),
+                ("cl", "подскажите номер договора"), ("op", "сейчас найду")]
+        fixed, swapped = fix_roles(call)
+        self.assertTrue(swapped)
+        self.assertEqual([s for s, _ in fixed], ["op", "cl", "op", "cl"])
+        same, swapped = fix_roles(fixed)
+        self.assertFalse(swapped)
+        self.assertEqual(same, fixed)
+        neutral = [("op", "да"), ("cl", "нет")]
+        self.assertEqual(fix_roles(neutral), (neutral, False))
 
 
 if __name__ == "__main__":

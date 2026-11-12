@@ -83,15 +83,18 @@
   лучше основной (0.11), но в одной оценке с ней проигрывают — вести вторым списком.
 - Воспроизводимость: в пустом контейнере по README данные, метрики и кластеры совпали до знака; все 89 тестов проходят
   в чистом venv.
-- Готовые скрипты: `research/run_comments.py` (USER-bge-m3, удаление шаблонов, вторая ступень; `--sentiment`, `--mask`;
-  выходы clusters/assignments/manual_check/dynamics/new_topics/unusual/boilerplate), `research/run_calls.py`.
+- Готовые скрипты: `research/run_comments.py` (USER-bge-m3, удаление шаблонов, вторая ступень; `--sentiment`, `--mask`,
+  `--label` — метрики против готовой разметки; выходы clusters/assignments/manual_check/dynamics/new_topics/unusual/
+  boilerplate/label_metrics), `research/run_calls.py` (`--roles auto` — роли по содержанию при перепутанных метках STT,
+  `--topic` — темы из разметки, `--center-on op` — только реплики оператора, вдвое быстрее; `--keep`; повторы id
+  схлопываются, эмбеддинги — по уникальным репликам).
 
 ## Структура
 - `src/lurker/` (ядро): `clean` (`RuleCleaner`, `LLMCleaner`, `client_turns`, `remove_boilerplate`), `dirty` (`make_dirty`: уровни tz/smm/mix/alt),
   `novelty` (`unusual_scores`, `emerging_groups`), `sentiment` (`predict_sentiment`), `cluster.split_large`, `anomaly.offtopic_score`,
   `embed` (`get_embedder`, `ST_MODELS`, `SentenceTransformerEmbedder`, `_HFEncoder`), `cluster` (`cluster_embeddings`,
   `evaluate` — NMI/ARI/чистота/B³, `knn_overlap`, `knn_label_share`), `anomaly` (`assign_topics`, `robust_z`,
-  `centroid/knn/lof/turn/coherence/relevance_score`, `turn_novelty`, `doc_max`, `split_dialog`, `ranking_metrics`),
+  `centroid/knn/lof/turn/coherence/relevance_score`, `turn_novelty`, `doc_max`, `split_dialog`, `fix_roles`, `ranking_metrics`),
   `clean` также `remove_boilerplate`, `dirty` уровень `alt` (незнакомые очистке форматы), `summarize` (`describe_cluster`, `name_topics`, …),
   `llm`, `config`, `text`, `data`, `dynamics`, `period`, `preclass`, `pipeline`, `cli`.
 - `src/lurker/service/` (отделяемое): `concept`, `query`, `assistant` — сценарий «вопрос к данным» из ТЗ v1. `ui/` — Streamlit
