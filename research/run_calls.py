@@ -172,9 +172,9 @@ def main(argv=None) -> int:
         for i, t in enumerate(calls):
             calls[i], swapped[i] = fix_roles(t, rx)
         print(f"роли поменяны местами в {swapped.mean():.0%} звонков", flush=True)
-    auto = [len(t) <= 3 and bool(AUTOANSWER.search(" ".join(x for _, x in t))) for t in calls]
+    auto = [len(t) <= 10 and bool(AUTOANSWER.search(" ".join(x for _, x in t))) for t in calls]
     if any(auto):
-        print(f"автоответчик оператора связи вместо разговора: {sum(auto)} звонков — пропущены", flush=True)
+        print(f"автоответчик или голосовой секретарь вместо разговора: {sum(auto)} звонков — пропущены", flush=True)
     keep = [i for i, t in enumerate(calls) if not auto[i] and any(s == "op" for s, _ in t)]
     if len(keep) < len(calls):
         n_noop = len(calls) - len(keep) - sum(auto)

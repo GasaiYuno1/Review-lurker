@@ -63,22 +63,29 @@ CLIENT_MARKERS = re.compile(
 # в 97% случаев, поэтому сторона приветствия = сторона оператора).
 GREETING = re.compile(
     r"(?:добр\w+\s+(?:день|дня|вечер|утро)|здравствуйте|приветствую)\b.{0,50}?(?:меня\s+зовут|могу\s+(?:вам\s+)?помочь|"
-    r"какой\s+(?:у\s+вас\s+)?(?:вопрос|опрос|прос)|слушаю|компани)|могу\s+(?:вам\s+)?помочь\s*$", re.IGNORECASE)
+    r"какой\s+(?:у\s+вас\s+)?(?:вопрос|опрос|прос)|слушаю|компани)|могу\s+(?:вам\s+)?помочь\s*$|"
+    r"(?:^|\s)(?:\w+\s+){0,3}помо(?:чь|щ\w*)\s*$|(?:зовут|меня)\s+\w+\s+(?:ч|че|чем)\s+(?:\w+\s+)?помо", re.IGNORECASE)
 
-# Автоответчик оператора связи вместо разговора (исходящий звонок не состоялся) — такие «звонки» не анализируются.
+# Автоответчик или голосовой секретарь абонента вместо разговора (исходящий звонок не состоялся) — такие «звонки» не
+# анализируются (run_calls: если найдено в звонке до 10 реплик).
 AUTOANSWER = re.compile(r"абонент\w*\s+(?:сейчас\s+)?не\s+может\s+ответить|аппарат\s+абонента|абонент\s+не\s+отвечает|"
-                        r"номер\s+не\s+существует|вне\s+зоны\s+действия", re.IGNORECASE)
+                        r"номер\s+не\s+существует|вне\s+зоны\s+действия|после\s+звукового\s+сигнала|"
+                        r"оставьте\s+(?:абоненту\s+)?(?:сообщение|собщение)|(?:сообщение|собщение)\s+для\s+абонента|"
+                        r"я\s+(?:все\s+|всё\s+)?запишу\s+и\s+передам|абонент\s+установил\s+меня", re.IGNORECASE)
 
 def fix_roles(turns: Sequence[tuple[str, str]], markers: re.Pattern = OP_MARKERS, client_markers: re.Pattern | None = CLIENT_MARKERS,
-              greeting: re.Pattern | None = GREETING, greeting_weight: float = 3.0, head: int = 4) -> tuple[list[tuple[str, str]], bool]:
-    """Счёт стороны = операторские фразы − фразы клиента (+ `greeting_weight` за приветствие в первых `head` репликах).
+              greeting: re.Pattern | None = GREETING, greeting_weight: float = 3.0, head: int = 6) -> tuple[list[tuple[str, str]], bool]:
+    """Счёт стороны = операторские фразы − фразы клиента (+ `greeting_weight` за приветствие в первых `head` репликах;
+    реплики стороны в начале звонка склеиваются — STT режет приветствие: «добрый» / «день меня зовут …»).
     Если у «клиента» счёт выше, чем у «оператора», — роли в звонке поменять местами. → (реплики, поменяны ли).
     Меняет только звонок целиком: перемешанные внутри звонка метки так не исправить."""
     sc = {"op": 0.0, "cl": 0.0}
-    for j, (s, x) in enumerate(turns):
+    for s, x in turns:
         sc[s] += len(markers.findall(x)) - (len(client_markers.findall(x)) if client_markers is not None else 0)
-        if greeting is not None and j < head and greeting.search(x):
-            sc[s] += greeting_weight
+    if greeting is not None:
+        for side in sc:
+            if any(greeting.search(x) for x in (" ".join(x for s, x in turns[:head] if s == side), *(x for s, x in turns[:head] if s == side))):
+                sc[side] += greeting_weight
     if sc["cl"] > sc["op"]:
         return [("cl" if s == "op" else "op", x) for s, x in turns], True
     return list(turns), False
