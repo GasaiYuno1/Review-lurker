@@ -67,6 +67,14 @@ class HelpersTests(unittest.TestCase):
         self.assertEqual(d["name"], "Отели и завтраки")
         self.assertEqual(d["outliers"], [2])
 
+    def test_describe_cluster_retries_foreign_script(self):
+        replies = iter([json.dumps({"название": "Отзывы о服务质量", "описание": "x"}, ensure_ascii=False),
+                        json.dumps({"название": "Отзывы о качестве обслуживания", "описание": "y"}, ensure_ascii=False)])
+        llm = FakeLLM(lambda m: next(replies))
+        d = describe_cluster(["спасибо", "отлично"], llm)
+        self.assertEqual(llm.calls, 2)
+        self.assertEqual(d["name"], "Отзывы о качестве обслуживания")
+
 
 class NoveltyTests(unittest.TestCase):
     def test_unusual_and_emerging(self):
