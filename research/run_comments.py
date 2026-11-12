@@ -42,15 +42,29 @@ from lurker.data import load_table, parse_dates  # noqa: E402
 from lurker.embed import get_embedder  # noqa: E402
 
 
-def embed(texts: list[str], model: str, cache_dir: Path) -> np.ndarray:
-    """Эмбеддинги с кэшем на диске (повторный запуск с другими настройками кластеризации — без пересчёта)."""
+def embed(texts: list[str], model: str, cache_dir: Path, chunk: int = 5000) -> np.ndarray:
+    """Эмбеддинги с кэшем на диске (повторный запуск с другими настройками кластеризации — без пересчёта). Пишутся кусками
+    по `chunk` текстов: прерванный прогон (длинные тексты на CPU — больше часа) при перезапуске продолжается с места остановки."""
     h = hashlib.sha1("\n".join(texts).encode("utf-8")).hexdigest()[:12]
     p = cache_dir / f"emb_{model}_{h}.npy"
     if p.exists():
         return np.load(p)
     t = time.time()
-    E = get_embedder(model).fit(texts).encode(texts).astype(np.float32)
+    enc = get_embedder(model).fit(texts)
+    parts = []
+    for i, a in enumerate(range(0, len(texts), chunk)):
+        pp = cache_dir / f"emb_{model}_{h}.part{i:03d}.npy"
+        if pp.exists():
+            parts.append(np.load(pp))
+            continue
+        parts.append(enc.encode(texts[a:a + chunk]).astype(np.float32))
+        np.save(pp, parts[-1])
+        if len(texts) > chunk:
+            print(f"  эмбеддинги: {min(a + chunk, len(texts))} из {len(texts)} ({time.time() - t:.0f} с)", flush=True)
+    E = np.concatenate(parts) if parts else np.zeros((0, 1), dtype=np.float32)
     np.save(p, E)
+    for pp in cache_dir.glob(f"emb_{model}_{h}.part*.npy"):
+        pp.unlink()
     print(f"эмбеддинги {model}: {E.shape[0]} текстов за {time.time() - t:.0f} с", flush=True)
     return E
 

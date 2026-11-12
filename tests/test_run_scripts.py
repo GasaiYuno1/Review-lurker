@@ -117,6 +117,21 @@ class SplitLargeTests(unittest.TestCase):
 
 
 class RunScriptsTests(unittest.TestCase):
+    def test_run_comments_embed_resumes_from_parts(self):
+        mod = load_script("run_comments")
+        texts = [f"интернет не работает дом {i}" for i in range(7)] + [f"оплата не прошла {i}" for i in range(7)]
+        with tempfile.TemporaryDirectory() as tmp:
+            full = mod.embed(texts, "tfidf", Path(tmp), chunk=5)
+            self.assertEqual(full.shape[0], len(texts))
+            self.assertFalse(list(Path(tmp).glob("*.part*.npy")))           # куски убраны после сборки
+        with tempfile.TemporaryDirectory() as tmp:                          # прерванный прогон: первый кусок уже на диске
+            import hashlib
+            h = hashlib.sha1("\n".join(texts).encode("utf-8")).hexdigest()[:12]
+            np.save(Path(tmp) / f"emb_tfidf_{h}.part000.npy", np.zeros((5, full.shape[1]), dtype=np.float32))
+            E = mod.embed(texts, "tfidf", Path(tmp), chunk=5)
+            self.assertTrue((E[:5] == 0).all())
+            self.assertTrue(np.allclose(E[5:], full[5:], atol=1e-5))
+
     def test_run_comments(self):
         rnd = random.Random(0)
         rows = []
