@@ -71,7 +71,9 @@ GREETING = re.compile(
 AUTOANSWER = re.compile(r"абонент\w*\s+(?:сейчас\s+)?не\s+может\s+ответить|аппарат\s+абонента|абонент\s+не\s+отвечает|"
                         r"номер\s+не\s+существует|вне\s+зоны\s+действия|после\s+звукового\s+сигнала|"
                         r"оставьте\s+(?:абоненту\s+)?(?:сообщение|собщение)|(?:сообщение|собщение)\s+для\s+абонента|"
-                        r"я\s+(?:все\s+|всё\s+)?запишу\s+и\s+передам|абонент\s+установил\s+меня", re.IGNORECASE)
+                        r"я\s+(?:все\s+|всё\s+)?запишу\s+и\s+передам|абонент\s+установил\s+меня|"
+                        r"я\s+(?:\w+\s+)?голосов\w*\s+а?сс?ист|абонент\w*\s+(?:сейчас\s+|пока\s+)?(?:не\s+|\w{1,2}\s+)?в\s+сети|"
+                        r"попросили\s+отвечать\s+на\s+звонки", re.IGNORECASE)
 
 def fix_roles(turns: Sequence[tuple[str, str]], markers: re.Pattern = OP_MARKERS, client_markers: re.Pattern | None = CLIENT_MARKERS,
               greeting: re.Pattern | None = GREETING, greeting_weight: float = 3.0, head: int = 6) -> tuple[list[tuple[str, str]], bool]:
@@ -91,11 +93,15 @@ def fix_roles(turns: Sequence[tuple[str, str]], markers: re.Pattern = OP_MARKERS
     return list(turns), False
 
 
-def center(E: np.ndarray) -> np.ndarray:
+def center(E: np.ndarray, weights: np.ndarray | None = None) -> np.ndarray:
     """Вычесть средний вектор корпуса и нормировать заново. Эмбеддинги однотипных текстов (реплики звонков в поддержку)
-    сильно сонаправлены — общий «жанровый» компонент забивает смысловые различия; центрирование их проявляет."""
-    E = np.asarray(E, dtype=np.float32) - np.asarray(E, dtype=np.float32).mean(axis=0)
-    return E / np.linalg.norm(E, axis=1, keepdims=True).clip(1e-9)
+    сильно сонаправлены — общий «жанровый» компонент забивает смысловые различия; центрирование их проявляет.
+    `weights` — сколько раз встречается каждая строка (E — эмбеддинги уникальных текстов): среднее то же, что по корпусу."""
+    E = np.asarray(E, dtype=np.float32)
+    mean = E.mean(axis=0) if weights is None else (np.asarray(weights, dtype=np.float64) @ E / np.sum(weights)).astype(np.float32)
+    E = E - mean
+    E /= np.linalg.norm(E, axis=1, keepdims=True).clip(1e-9)
+    return E
 
 
 def assign_topics(E: np.ndarray, labels: np.ndarray) -> np.ndarray:
@@ -162,28 +168,36 @@ def lof_score(E: np.ndarray, topics: np.ndarray, k: int = 15) -> np.ndarray:
     return s
 
 
-def turn_novelty(T: np.ndarray, turn_doc: np.ndarray, doc_topics: np.ndarray, k: int = 10, block: int = 2048) -> np.ndarray:
+def turn_novelty(T: np.ndarray, turn_doc: np.ndarray, doc_topics: np.ndarray, k: int = 10, block: int = 2048,
+                 rows: np.ndarray | None = None, query: np.ndarray | None = None) -> np.ndarray:
     """Новизна каждой реплики: 1 − среднее сходство с k ближайшими репликами из ДРУГИХ звонков той же темы.
     Считается блоками по `block` реплик (для больших тем блок меньше: матрица блока — не больше ~5·10⁷ чисел) —
-    память O(block × размер темы), а не квадрат темы."""
+    память O(block × размер темы), а не квадрат темы.
+    `rows` — номер строки T для каждой реплики (T — эмбеддинги уникальных текстов: на месяце звонков развёрнутая
+    матрица всех реплик не помещается в память); `query` — для каких реплик считать новизну (остальные — 0, но остаются
+    соседями): оценки звонка берут только реплики от `--min-words` слов."""
     T = np.asarray(T, dtype=np.float32)
     turn_doc = np.asarray(turn_doc)
+    rows = np.arange(len(turn_doc)) if rows is None else np.asarray(rows)
+    qm = np.ones(len(turn_doc), dtype=bool) if query is None else np.asarray(query, dtype=bool)
     turn_topic = np.asarray(doc_topics)[turn_doc]
-    ts = np.zeros(len(T))
-    for t in np.unique(turn_topic):
+    ts = np.zeros(len(turn_doc))
+    for t in np.unique(turn_topic[qm]):
         idx = np.where(turn_topic == t)[0]
         if len(idx) < 3:
             continue
+        q = np.where(qm[idx])[0]                                    # позиции запросов внутри темы
         kk = max(1, min(k, len(idx) - 1))
-        Tt, dt = T[idx], turn_doc[idx]
+        Tt, dt = T[rows[idx]], turn_doc[idx]
         blk = max(16, min(block, int(5e7 // len(idx))))
-        for a in range(0, len(idx), blk):
-            S = Tt[a:a + blk] @ Tt.T
-            S[dt[a:a + blk, None] == dt[None, :]] = -np.inf
+        for a in range(0, len(q), blk):
+            qb = q[a:a + blk]
+            S = Tt[qb] @ Tt.T
+            S[dt[qb, None] == dt[None, :]] = -np.inf
             best = np.partition(S, S.shape[1] - kk, axis=1)[:, -kk:]      # k наибольших (порядок не важен — дальше среднее)
             best[~np.isfinite(best)] = np.nan
             with np.errstate(all="ignore"):
-                ts[idx[a:a + blk]] = 1.0 - np.nan_to_num(np.nanmean(best, axis=1), nan=0.0)
+                ts[idx[qb]] = 1.0 - np.nan_to_num(np.nanmean(best, axis=1), nan=0.0)
     return ts
 
 

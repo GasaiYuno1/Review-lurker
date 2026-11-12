@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from lurker.anomaly import (assign_topics, centroid_score, coherence_score, doc_max, fix_roles, knn_score, lof_score, offtopic_score,  # noqa: E402
+from lurker.anomaly import (assign_topics, center, centroid_score, coherence_score, doc_max, fix_roles, knn_score, lof_score, offtopic_score,  # noqa: E402
                             precision_at_k, ranking_metrics, recall_at_k, relevance_score, robust_z, sidak_score, turn_novelty,
                             turn_score)
 
@@ -104,6 +104,21 @@ class AnomalyTests(unittest.TestCase):
             S[doc[idx, None] == doc[None, idx]] = -np.inf
             ref[idx] = 1.0 - (-np.sort(-S, axis=1)[:, :10]).mean(axis=1)
         np.testing.assert_allclose(turn_novelty(T, doc, topics, k=10, block=7), ref, atol=1e-5)
+
+    def test_unique_rows_and_query_match_expanded(self):
+        # месяц звонков: эмбеддинги уникальных текстов + номер строки на реплику — то же, что развёрнутая матрица
+        rng = np.random.default_rng(2)
+        U = unit(rng.normal(size=(60, 16)).astype(np.float32)) + 0.5         # сонаправленные, как реплики поддержки
+        inv = rng.integers(0, 60, size=400)                                   # повторы текстов («да», «угу», приветствия)
+        doc = np.repeat(np.arange(80), 5)
+        topics = np.arange(80) % 3
+        full = center(U[inv])
+        np.testing.assert_allclose(center(U, weights=np.bincount(inv, minlength=60))[inv], full, atol=1e-5)
+        ref = turn_novelty(full, doc, topics, k=10)
+        q = rng.random(400) < 0.4
+        got = turn_novelty(center(U, weights=np.bincount(inv, minlength=60)), doc, topics, k=10, block=9, rows=inv, query=q)
+        np.testing.assert_allclose(got[q], ref[q], atol=1e-5)
+        self.assertTrue((got[~q] == 0).all())
 
     def test_fix_roles_swaps_mislabeled_call(self):
         call = [("cl", "добрый день меня зовут анна чем могу помочь"), ("op", "у меня интернет не работает"),

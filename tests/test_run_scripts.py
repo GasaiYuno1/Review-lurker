@@ -177,6 +177,9 @@ class RunScriptsTests(unittest.TestCase):
                 rows += [{"id": f"{topic}-{i}", "text": text, "Тема": topic, "Дата": "01.09.2026"}] * 2
         rows.append({"id": "auto-1", "text": "Оператор: абонент сейчас не может ответить перезвоните позже", "Тема": "оплата",
                      "Дата": "01.09.2026"})
+        rows.append({"id": "auto-2", "text": "Оператор: здравствуйте абонент пока не в сети я голосовой ассистент что передать\n"
+                     "Клиент: добрый день это компания по поводу заявки", "Тема": "оплата", "Дата": "01.09.2026"})
+        rows.append({"id": "mono-1", "text": "Оператор: сори зе конекшн из лост", "Тема": "оплата", "Дата": "01.09.2026"})
         rude = "оплата-3"
         for r in rows:
             if r["id"] == rude:
@@ -196,6 +199,8 @@ class RunScriptsTests(unittest.TestCase):
             self.assertIn(rude, sc["id"].head(3).tolist())
             self.assertIn("идиот", sc.set_index("id").loc[rude, "worst_operator_turn"])
             self.assertNotIn("auto-1", sc["id"].tolist())                         # автоответчик вместо разговора — пропущен
+            self.assertNotIn("auto-2", sc["id"].tolist())                         # голосовой ассистент абонента
+            self.assertNotIn("mono-1", sc["id"].tolist())                         # одна реплика — разговора нет
             load_script("run_calls").main([str(src), "--text", "text", "--id", "id", "--model", "tfidf", "--out", tmp,
                                            "--roles", "auto", "--topic", "Тема", "--min-topic", "10", "--center-on", "op",
                                            "--score", "sidak", "--min-words", "2"])

@@ -50,17 +50,19 @@ def stt_norm(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s-]", " ", text.lower())).strip()
 
 
-def embed(texts: list[str], model: str, cache_dir: Path, what: str, chunk: int = 50_000) -> np.ndarray:
+def embed(texts: list[str], model: str, cache_dir: Path, what: str, chunk: int = 50_000, unique: bool = False):
     """Эмбеддинги уникальных текстов (реплики вроде «да», «угу», приветствия повторяются тысячи раз) с кэшем на диске.
     Кэш пишется кусками по `chunk` текстов: прерванный прогон при повторном запуске продолжается с места остановки.
     Рядом с кэшем — список его текстов (`.texts.pkl`): повторный прогон с другим набором реплик (другие роли, другой
-    период) берёт готовые эмбеддинги из прежних кэшей той же модели и считает только новые тексты."""
+    период) берёт готовые эмбеддинги из прежних кэшей той же модели и считает только новые тексты.
+    unique=True → (эмбеддинги уникальных текстов, номер строки для каждого текста) — без развёртывания на все тексты."""
     uniq, inv = np.unique(np.asarray(texts, dtype=object), return_inverse=True)
     uniq = uniq.tolist()
     h = hashlib.sha1("\n".join(uniq).encode("utf-8")).hexdigest()[:12]
     p = cache_dir / f"emb_{what}_{model}_{h}.npy"
     if p.exists():
-        return np.load(p)[inv]
+        E = np.load(p)
+        return (E, inv) if unique else E[inv]
     t = time.time()
     known: dict[str, tuple[Path, int]] = {}
     reusable = model in ST_MODELS                                   # TF-IDF/гибрид обучаются на корпусе — между прогонами не переносятся
@@ -100,7 +102,7 @@ def embed(texts: list[str], model: str, cache_dir: Path, what: str, chunk: int =
         pp.unlink()
     print(f"эмбеддинги {what} {model}: {len(uniq)} уникальных из {len(texts)} (новых {len(todo)}, из прежних кэшей {len(old)}) "
           f"за {time.time() - t:.0f} с", flush=True)
-    return E[inv]
+    return (E, inv) if unique else E[inv]
 
 
 def read_calls(a) -> tuple[list[str], list[list[tuple[str, str]]], pd.DataFrame]:
@@ -176,9 +178,12 @@ def main(argv=None) -> int:
     auto = [len(t) <= 10 and bool(AUTOANSWER.search(" ".join(x for _, x in t))) for t in calls]
     if any(auto):
         print(f"автоответчик или голосовой секретарь вместо разговора: {sum(auto)} звонков — пропущены", flush=True)
-    keep = [i for i, t in enumerate(calls) if not auto[i] and any(s == "op" for s, _ in t)]
+    mono = [not auto[i] and len(t) < 2 for i, t in enumerate(calls)]
+    if any(mono):
+        print(f"одна реплика — разговора нет или STT не разделил говорящих: {sum(mono)} звонков — пропущены", flush=True)
+    keep = [i for i, t in enumerate(calls) if not auto[i] and not mono[i] and any(s == "op" for s, _ in t)]
     if len(keep) < len(calls):
-        n_noop = len(calls) - len(keep) - sum(auto)
+        n_noop = len(calls) - len(keep) - sum(auto) - sum(mono)
         if n_noop:
             print(f"без реплик оператора (не распознаны метки говорящих?): {n_noop} звонков — пропущены", flush=True)
     ids, calls, swapped, meta = [ids[i] for i in keep], [calls[i] for i in keep], swapped[keep], meta.iloc[keep].reset_index(drop=True)
@@ -208,11 +213,14 @@ def main(argv=None) -> int:
         topics = assign_topics(E, res.labels)
         kw = {tp.id: ", ".join([k for k in tp.keywords if k not in ("оператор", "клиент")][:6]) for tp in res.topics}
     nov = np.zeros(len(turns))
-    if a.center_on == "op":
-        nov[op] = turn_novelty(center(embed([x for x, o in zip(turns, op) if o], a.model, out, "opturns")), owner[op], topics, k=10)
-    else:
-        nov[op] = turn_novelty(center(embed(turns, a.model, out, "turns"))[op], owner[op], topics, k=10)
     elig = op & (np.array([len(x.split()) for x in turns]) >= a.min_words)
+    sel = op if a.center_on == "op" else np.ones(len(turns), dtype=bool)          # чьи реплики эмбеддить и центрировать
+    E, inv = embed([x for x, o in zip(turns, sel) if o], a.model, out, "opturns" if a.center_on == "op" else "turns", unique=True)
+    E = center(E, weights=np.bincount(inv, minlength=len(E)))       # среднее по всем репликам, а не по уникальным текстам
+    row_of = np.full(len(turns), -1)
+    row_of[sel] = inv
+    nov[op] = turn_novelty(E, owner[op], topics, k=10, rows=row_of[op], query=elig[op])
+    del E
     if a.score == "sidak":
         score = sidak_score(nov[elig], owner[elig], topics, len(calls))
     else:
@@ -225,10 +233,12 @@ def main(argv=None) -> int:
 
     keep_cols = [c.strip() for c in (a.keep or "").split(",") if c.strip()]
     rows = []
+    bounds = np.r_[0, np.cumsum([len(t) for t in calls])]           # реплики звонка d — подряд: [bounds[d], bounds[d + 1])
     for d in range(len(calls)):
-        m = np.where((owner == d) & elig)[0]
+        r = np.arange(bounds[d], bounds[d + 1])
+        m = r[elig[r]]
         if not len(m):
-            m = np.where((owner == d) & op)[0]
+            m = r[op[r]]
         w = m[np.argmax(nov[m])]                                   # самая «чужая» реплика оператора
         prev = [x for s, x in calls[d][:pos[w]] if s == "cl"]
         rows.append({"id": ids[d], "topic": int(topics[d]), "topic_keywords": kw.get(int(topics[d]), ""), "z": round(float(z[d]), 2),
