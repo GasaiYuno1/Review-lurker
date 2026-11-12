@@ -144,7 +144,8 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default="user-base")
     ap.add_argument("--mcs", type=int, default=0, help="min_cluster_size тем (0 — авто: √n/2)")
     ap.add_argument("--top", type=int, default=50, help="сколько звонков в top.md")
-    ap.add_argument("--z", type=float, default=2.0, help="порог «помечен» по робастному z внутри темы")
+    ap.add_argument("--z", type=float, default=2.0, help="порог «помечен» по робастному z внутри темы (оценка max)")
+    ap.add_argument("--alpha", type=float, default=0.01, help="порог «помечен» для оценки sidak: p звонка < alpha")
     ap.add_argument("--keep-punct", action="store_true", help="не приводить реплики к виду STT (регистр, пунктуация)")
     ap.add_argument("--roles", choices=("labels", "auto"), default="labels",
                     help="auto — роли по содержанию реплик, если метки говорящих перепутаны (lurker.anomaly.fix_roles)")
@@ -217,6 +218,10 @@ def main(argv=None) -> int:
     else:
         score = doc_max(nov[elig], owner[elig], len(calls))
     z = robust_z(score, topics)
+    # sidak — уже −log10 p внутри темы (при отсутствии аномалий p равномерно): помечать по p, а не по z — у этой оценки
+    # длинный правый хвост, и z ≥ 2 метит ~15% звонков
+    flag = score >= -np.log10(a.alpha) if a.score == "sidak" else z >= a.z
+    rule = f"p < {a.alpha}" if a.score == "sidak" else f"z ≥ {a.z}"
 
     keep_cols = [c.strip() for c in (a.keep or "").split(",") if c.strip()]
     rows = []
@@ -227,7 +232,7 @@ def main(argv=None) -> int:
         w = m[np.argmax(nov[m])]                                   # самая «чужая» реплика оператора
         prev = [x for s, x in calls[d][:pos[w]] if s == "cl"]
         rows.append({"id": ids[d], "topic": int(topics[d]), "topic_keywords": kw.get(int(topics[d]), ""), "z": round(float(z[d]), 2),
-                     "score": round(float(score[d]), 4), "flagged": bool(z[d] >= a.z), "worst_operator_turn": shown[w],
+                     "score": round(float(score[d]), 4), "flagged": bool(flag[d]), "worst_operator_turn": shown[w],
                      "client_before": prev[-1] if prev else "", "n_turns": len(calls[d]), "roles_swapped": bool(swapped[d]),
                      **{c: meta.at[d, c] for c in keep_cols}})
     sc = pd.DataFrame(rows).sort_values("z", ascending=False)
@@ -236,7 +241,7 @@ def main(argv=None) -> int:
     tp.sort_values("calls", ascending=False).to_csv(out / "topics.csv", index=False)
 
     md = [f"# Подозрительные звонки: {Path(a.file).name}", "",
-          f"{len(calls)} звонков, тем {len(tp)}, модель {a.model}, оценка {a.score}. Помечено z ≥ {a.z}: {int(sc.flagged.sum())} "
+          f"{len(calls)} звонков, тем {len(tp)}, модель {a.model}, оценка {a.score}. Помечено {rule}: {int(sc.flagged.sum())} "
           f"({sc.flagged.mean():.1%}). Ниже — топ-{min(a.top, len(sc))} по z (внутри своей темы).", ""]
     for _, r in sc.head(a.top).iterrows():
         md += [f"## {r['id']} — z = {r['z']}", f"Тема: {r['topic_keywords']}", ""]
@@ -244,7 +249,7 @@ def main(argv=None) -> int:
             md.append(f"> Клиент: {r['client_before'][:300]}")
         md += [f"> **Оператор: {r['worst_operator_turn'][:400]}**", ""]
     (out / "top.md").write_text("\n".join(md), encoding="utf-8")
-    print(f"помечено {int(sc.flagged.sum())} из {len(sc)} (z ≥ {a.z}) → {out}/calls_scored.csv, topics.csv, top.md", flush=True)
+    print(f"помечено {int(sc.flagged.sum())} из {len(sc)} ({rule}) → {out}/calls_scored.csv, topics.csv, top.md", flush=True)
     return 0
 
 
