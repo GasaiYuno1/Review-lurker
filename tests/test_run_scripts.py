@@ -175,6 +175,8 @@ class RunScriptsTests(unittest.TestCase):
                 text = (f"Клиент: здравствуйте меня зовут анна чем могу помочь\nОператор: {rnd.choice(phrases)}\n"
                         f"Клиент: {rnd.choice(answers[topic])}\nОператор: спасибо")
                 rows += [{"id": f"{topic}-{i}", "text": text, "Тема": topic, "Дата": "01.09.2026"}] * 2
+        rows.append({"id": "auto-1", "text": "Оператор: абонент сейчас не может ответить перезвоните позже", "Тема": "оплата",
+                     "Дата": "01.09.2026"})
         rude = "оплата-3"
         for r in rows:
             if r["id"] == rude:
@@ -193,6 +195,12 @@ class RunScriptsTests(unittest.TestCase):
             self.assertIn("Дата", sc.columns)
             self.assertIn(rude, sc["id"].head(3).tolist())
             self.assertIn("идиот", sc.set_index("id").loc[rude, "worst_operator_turn"])
+            self.assertNotIn("auto-1", sc["id"].tolist())                         # автоответчик вместо разговора — пропущен
+            load_script("run_calls").main([str(src), "--text", "text", "--id", "id", "--model", "tfidf", "--out", tmp,
+                                           "--roles", "auto", "--topic", "Тема", "--min-topic", "10", "--center-on", "op",
+                                           "--score", "sidak", "--min-words", "2"])
+            sc = pd.read_csv(Path(tmp) / "calls_scored.csv")
+            self.assertIn(rude, sc["id"].head(3).tolist())
 
     def test_run_calls_embed_resumes_from_chunks(self):
         mod = load_script("run_calls")
@@ -214,6 +222,35 @@ class RunScriptsTests(unittest.TestCase):
             m = np.array([x in first for x in texts])
             self.assertTrue(np.all(got[m] == 0))
             np.testing.assert_allclose(got[~m], ref[~m], atol=1e-6)
+
+    def test_run_calls_embed_reuses_previous_caches(self):
+        """Второй прогон с частично новым набором реплик считает эмбеддинги только для новых текстов."""
+        mod = load_script("run_calls")
+        seen = []
+
+        class Fake:
+            def fit(self, texts):
+                return self
+
+            def encode(self, texts):
+                seen.extend(texts)
+                return np.array([[len(x), sum(map(ord, x)) % 97, 1.0] for x in texts], dtype=np.float32)
+
+        mod.get_embedder, mod.ST_MODELS = (lambda model: Fake()), {"fake": None}
+        a = [f"реплика {i}" for i in range(30)]
+        b = a[10:] + [f"новая {i}" for i in range(5)]
+        with tempfile.TemporaryDirectory() as tmp:
+            ea = mod.embed(a, "fake", Path(tmp), "t")
+            self.assertEqual(len(seen), 30)
+            seen.clear()
+            eb = mod.embed(b, "fake", Path(tmp), "t")
+            self.assertEqual(sorted(seen), sorted(f"новая {i}" for i in range(5)))
+            np.testing.assert_array_equal(eb[:20], ea[10:])
+            np.testing.assert_array_equal(eb, Fake().encode(b))
+            seen.clear()
+            mod.embed(b, "fake", Path(tmp), "t")                             # тот же набор — прямо из кэша
+            self.assertEqual(seen, [])
+
 
 if __name__ == "__main__":
     unittest.main()

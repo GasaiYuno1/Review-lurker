@@ -38,11 +38,11 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from lurker.anomaly import (CLIENT_LABELS, OP_LABELS, OP_MARKERS, assign_topics, center, doc_max, fix_roles, robust_z,  # noqa: E402
-                            split_dialog, turn_novelty)
+from lurker.anomaly import (AUTOANSWER, CLIENT_LABELS, OP_LABELS, OP_MARKERS, assign_topics, center, doc_max, fix_roles,  # noqa: E402
+                            robust_z, sidak_score, split_dialog, turn_novelty)
 from lurker.cluster import cluster_embeddings  # noqa: E402
 from lurker.data import load_table  # noqa: E402
-from lurker.embed import get_embedder  # noqa: E402
+from lurker.embed import ST_MODELS, get_embedder  # noqa: E402
 
 
 def stt_norm(text: str) -> str:
@@ -52,7 +52,9 @@ def stt_norm(text: str) -> str:
 
 def embed(texts: list[str], model: str, cache_dir: Path, what: str, chunk: int = 50_000) -> np.ndarray:
     """Эмбеддинги уникальных текстов (реплики вроде «да», «угу», приветствия повторяются тысячи раз) с кэшем на диске.
-    Кэш пишется кусками по `chunk` текстов: прерванный прогон при повторном запуске продолжается с места остановки."""
+    Кэш пишется кусками по `chunk` текстов: прерванный прогон при повторном запуске продолжается с места остановки.
+    Рядом с кэшем — список его текстов (`.texts.pkl`): повторный прогон с другим набором реплик (другие роли, другой
+    период) берёт готовые эмбеддинги из прежних кэшей той же модели и считает только новые тексты."""
     uniq, inv = np.unique(np.asarray(texts, dtype=object), return_inverse=True)
     uniq = uniq.tolist()
     h = hashlib.sha1("\n".join(uniq).encode("utf-8")).hexdigest()[:12]
@@ -60,22 +62,44 @@ def embed(texts: list[str], model: str, cache_dir: Path, what: str, chunk: int =
     if p.exists():
         return np.load(p)[inv]
     t = time.time()
-    enc = get_embedder(model).fit(uniq)
+    known: dict[str, tuple[Path, int]] = {}
+    reusable = model in ST_MODELS                                   # TF-IDF/гибрид обучаются на корпусе — между прогонами не переносятся
+    for tp in sorted(cache_dir.glob(f"emb_*_{model}_*.texts.pkl")) if reusable else []:
+        ep = tp.with_name(tp.name[:-len(".texts.pkl")] + ".npy")
+        if ep.exists():
+            for i, x in enumerate(pd.read_pickle(tp)):
+                known.setdefault(x, (ep, i))
+    old = [i for i, x in enumerate(uniq) if x in known]
+    todo = [i for i, x in enumerate(uniq) if x not in known]
+    enc = get_embedder(model).fit(uniq) if todo else None
     parts = []
-    for i, a in enumerate(range(0, len(uniq), chunk)):
+    for i, a in enumerate(range(0, len(todo), chunk)):
         pp = cache_dir / f"emb_{what}_{model}_{h}.part{i:03d}.npy"
         if pp.exists():
             parts.append(np.load(pp))
             continue
-        parts.append(enc.encode(uniq[a:a + chunk]).astype(np.float32))
+        parts.append(enc.encode([uniq[j] for j in todo[a:a + chunk]]).astype(np.float32))
         np.save(pp, parts[-1])
-        if len(uniq) > chunk:
-            print(f"  {what}: {min(a + chunk, len(uniq))} из {len(uniq)} ({time.time() - t:.0f} с)", flush=True)
-    E = np.concatenate(parts) if parts else np.zeros((0, 1), dtype=np.float32)
+        if len(todo) > chunk:
+            print(f"  {what}: {min(a + chunk, len(todo))} из {len(todo)} ({time.time() - t:.0f} с)", flush=True)
+    new = np.concatenate(parts) if parts else None
+    dim = new.shape[1] if new is not None else None
+    loaded: dict[Path, np.ndarray] = {}
+    for ep in {known[uniq[i]][0] for i in old}:
+        loaded[ep] = np.load(ep, mmap_mode="r")
+        dim = loaded[ep].shape[1]
+    E = np.zeros((len(uniq), dim or 1), dtype=np.float32)
+    if new is not None:
+        E[todo] = new
+    for i in old:
+        ep, j = known[uniq[i]]
+        E[i] = loaded[ep][j]
     np.save(p, E)
+    pd.to_pickle(uniq, p.with_name(p.name[:-len(".npy")] + ".texts.pkl"))
     for pp in cache_dir.glob(f"emb_{what}_{model}_{h}.part*.npy"):
         pp.unlink()
-    print(f"эмбеддинги {what} {model}: {len(uniq)} уникальных из {len(texts)} за {time.time() - t:.0f} с", flush=True)
+    print(f"эмбеддинги {what} {model}: {len(uniq)} уникальных из {len(texts)} (новых {len(todo)}, из прежних кэшей {len(old)}) "
+          f"за {time.time() - t:.0f} с", flush=True)
     return E[inv]
 
 
@@ -129,6 +153,10 @@ def main(argv=None) -> int:
     ap.add_argument("--min-topic", type=int, default=30, help="темы меньше стольких звонков (при --topic) — в общую группу")
     ap.add_argument("--center-on", choices=("all", "op"), default="all",
                     help="центрировать по всем репликам (как в исследовании) или только по репликам оператора (вдвое быстрее)")
+    ap.add_argument("--score", choices=("max", "sidak"), default="max",
+                    help="оценка звонка: max — самая необычная реплика; sidak — она же с поправкой на число реплик (длинные "
+                         "звонки не всплывают только из-за длины)")
+    ap.add_argument("--min-words", type=int, default=1, help="реплики оператора короче стольких слов не оцениваются (обрывки STT)")
     ap.add_argument("--keep", help="колонки исходной таблицы через запятую — перенести в calls_scored.csv (дата, оператор, …)")
     ap.add_argument("--out", default=str(ROOT / "build" / "run_calls"))
     a = ap.parse_args(argv)
@@ -144,9 +172,14 @@ def main(argv=None) -> int:
         for i, t in enumerate(calls):
             calls[i], swapped[i] = fix_roles(t, rx)
         print(f"роли поменяны местами в {swapped.mean():.0%} звонков", flush=True)
-    keep = [i for i, t in enumerate(calls) if any(s == "op" for s, _ in t)]
+    auto = [len(t) <= 3 and bool(AUTOANSWER.search(" ".join(x for _, x in t))) for t in calls]
+    if any(auto):
+        print(f"автоответчик оператора связи вместо разговора: {sum(auto)} звонков — пропущены", flush=True)
+    keep = [i for i, t in enumerate(calls) if not auto[i] and any(s == "op" for s, _ in t)]
     if len(keep) < len(calls):
-        print(f"без реплик оператора (не распознаны метки говорящих?): {len(calls) - len(keep)} звонков — пропущены", flush=True)
+        n_noop = len(calls) - len(keep) - sum(auto)
+        if n_noop:
+            print(f"без реплик оператора (не распознаны метки говорящих?): {n_noop} звонков — пропущены", flush=True)
     ids, calls, swapped, meta = [ids[i] for i in keep], [calls[i] for i in keep], swapped[keep], meta.iloc[keep].reset_index(drop=True)
     if len(calls) < 20:
         raise SystemExit(f"слишком мало звонков с репликами оператора: {len(calls)}")
@@ -178,13 +211,19 @@ def main(argv=None) -> int:
         nov[op] = turn_novelty(center(embed([x for x, o in zip(turns, op) if o], a.model, out, "opturns")), owner[op], topics, k=10)
     else:
         nov[op] = turn_novelty(center(embed(turns, a.model, out, "turns"))[op], owner[op], topics, k=10)
-    score = doc_max(nov[op], owner[op], len(calls))
+    elig = op & (np.array([len(x.split()) for x in turns]) >= a.min_words)
+    if a.score == "sidak":
+        score = sidak_score(nov[elig], owner[elig], topics, len(calls))
+    else:
+        score = doc_max(nov[elig], owner[elig], len(calls))
     z = robust_z(score, topics)
 
     keep_cols = [c.strip() for c in (a.keep or "").split(",") if c.strip()]
     rows = []
     for d in range(len(calls)):
-        m = np.where((owner == d) & op)[0]
+        m = np.where((owner == d) & elig)[0]
+        if not len(m):
+            m = np.where((owner == d) & op)[0]
         w = m[np.argmax(nov[m])]                                   # самая «чужая» реплика оператора
         prev = [x for s, x in calls[d][:pos[w]] if s == "cl"]
         rows.append({"id": ids[d], "topic": int(topics[d]), "topic_keywords": kw.get(int(topics[d]), ""), "z": round(float(z[d]), 2),
@@ -197,7 +236,7 @@ def main(argv=None) -> int:
     tp.sort_values("calls", ascending=False).to_csv(out / "topics.csv", index=False)
 
     md = [f"# Подозрительные звонки: {Path(a.file).name}", "",
-          f"{len(calls)} звонков, тем {len(tp)}, модель {a.model}. Помечено z ≥ {a.z}: {int(sc.flagged.sum())} "
+          f"{len(calls)} звонков, тем {len(tp)}, модель {a.model}, оценка {a.score}. Помечено z ≥ {a.z}: {int(sc.flagged.sum())} "
           f"({sc.flagged.mean():.1%}). Ниже — топ-{min(a.top, len(sc))} по z (внутри своей темы).", ""]
     for _, r in sc.head(a.top).iterrows():
         md += [f"## {r['id']} — z = {r['z']}", f"Тема: {r['topic_keywords']}", ""]

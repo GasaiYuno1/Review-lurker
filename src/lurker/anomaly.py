@@ -20,6 +20,7 @@ import re
 from typing import Optional, Sequence
 
 import numpy as np
+import pandas as pd
 
 
 OP_LABELS = ("оператор", "менеджер", "сотрудник", "специалист", "агент", "operator", "agent")
@@ -44,20 +45,41 @@ def split_dialog(text: str, op_labels: Sequence[str] = OP_LABELS, client_labels:
 
 # Фразы, которые говорит оператор, а не клиент: по ним определяется, кто есть кто, когда метки говорящих в расшифровке
 # перепутаны (STT размечает каналы, а не роли: в выгрузке с метками operator/subscriber операторские фразы стояли у
-# subscriber в ~65% звонков).
+# subscriber в ~90% звонков). Шаблоны терпят искажения STT: удвоенные буквы теряются («на лини», «ожидани»), слова сливаются
+# и обрываются («зблокировать могу помочь» вместо «здравствуйте, чем могу помочь»).
 OP_MARKERS = re.compile(
-    r"меня зовут|чем (?:я )?(?:могу|можем) (?:вам )?помочь|оставайтесь на линии|(?:спасибо|благодарю) за ожидание|"
-    r"ожидайте,? (?:пожалуйста,? )?на линии|по какому вопросу|подскажите,? (?:пожалуйста,? )?(?:номер|адрес)|"
-    r"номер (?:вашего )?договора", re.IGNORECASE)
+    r"могу\s+(?:вам\s+)?помочь|меня\s+зовут\s+\w+\s+(?:чем|че|ч|какой|слушаю)|на\s+лини|за\s+ожидани|уважаем\w*\s+абонент|"
+    r"как\s+(?:я\s+)?(?:могу\s+)?(?:к\s+)?вам\s+обращат|(?:подскажите|уточните|назовите),?\s+(?:пожалуйста,?\s+)?(?:ваш\s+)?(?:полностью\s+)?"
+    r"(?:адрес|номер)|адрес,?\s+(?:пожалуйста,?\s+)?(?:подскажите|уточните|назовите)|какой\s+у\s+вас\s+(?:вопрос|опрос|прос)|"
+    r"по\s+какому\s+(?:адресу|вопросу)|имя\s+отчеств\w*\s+владельца|подтвержд?\w*\s+адрес|номер\s+(?:вашего\s+)?договора|"
+    r"сейчас\s+(?:посмотрим|проверим|проверю)|очень\s+приятно|давайте\s+(?:проверим|посмотрим|разберемся|разберёмся)",
+    re.IGNORECASE)
+# Фразы клиента — вычитаются из счёта стороны.
+CLIENT_MARKERS = re.compile(
+    r"у\s+меня\s+(?:не\s+работает|нет|пропал|не\s+открывается)|я\s+хотел\w*\s+(?:бы\s+)?(?:узнать|подключить|отключить|перенести|"
+    r"расторгнуть)|мне\s+(?:нужно|надо)|почему\s+у\s+меня|(?:скажите|подскажите),?\s+пожалуйста,?\s+(?:у\s+меня|почему|а\s)",
+    re.IGNORECASE)
+# Приветствие оператора в начале звонка — самый надёжный признак (в выгрузке звонков метки внутри звонка согласованы
+# в 97% случаев, поэтому сторона приветствия = сторона оператора).
+GREETING = re.compile(
+    r"(?:добр\w+\s+(?:день|дня|вечер|утро)|здравствуйте|приветствую)\b.{0,50}?(?:меня\s+зовут|могу\s+(?:вам\s+)?помочь|"
+    r"какой\s+(?:у\s+вас\s+)?(?:вопрос|опрос|прос)|слушаю|компани)|могу\s+(?:вам\s+)?помочь\s*$", re.IGNORECASE)
 
+# Автоответчик оператора связи вместо разговора (исходящий звонок не состоялся) — такие «звонки» не анализируются.
+AUTOANSWER = re.compile(r"абонент\w*\s+(?:сейчас\s+)?не\s+может\s+ответить|аппарат\s+абонента|абонент\s+не\s+отвечает|"
+                        r"номер\s+не\s+существует|вне\s+зоны\s+действия", re.IGNORECASE)
 
-def fix_roles(turns: Sequence[tuple[str, str]], markers: re.Pattern = OP_MARKERS) -> tuple[list[tuple[str, str]], bool]:
-    """Если операторских фраз (`markers`) больше в репликах «клиента», чем «оператора», — роли в звонке поменять местами.
-    → (реплики, поменяны ли). Меняет только звонок целиком: перемешанные внутри звонка метки так не исправить."""
-    hits = {"op": 0, "cl": 0}
-    for s, x in turns:
-        hits[s] += bool(markers.search(x))
-    if hits["cl"] > hits["op"]:
+def fix_roles(turns: Sequence[tuple[str, str]], markers: re.Pattern = OP_MARKERS, client_markers: re.Pattern | None = CLIENT_MARKERS,
+              greeting: re.Pattern | None = GREETING, greeting_weight: float = 3.0, head: int = 4) -> tuple[list[tuple[str, str]], bool]:
+    """Счёт стороны = операторские фразы − фразы клиента (+ `greeting_weight` за приветствие в первых `head` репликах).
+    Если у «клиента» счёт выше, чем у «оператора», — роли в звонке поменять местами. → (реплики, поменяны ли).
+    Меняет только звонок целиком: перемешанные внутри звонка метки так не исправить."""
+    sc = {"op": 0.0, "cl": 0.0}
+    for j, (s, x) in enumerate(turns):
+        sc[s] += len(markers.findall(x)) - (len(client_markers.findall(x)) if client_markers is not None else 0)
+        if greeting is not None and j < head and greeting.search(x):
+            sc[s] += greeting_weight
+    if sc["cl"] > sc["op"]:
         return [("cl" if s == "op" else "op", x) for s, x in turns], True
     return list(turns), False
 
@@ -175,6 +197,27 @@ def doc_max(ts: np.ndarray, turn_doc: np.ndarray, n_docs: int, top: int = 1) -> 
     starts = np.r_[0, np.flatnonzero(np.diff(d)) + 1]
     for a, b in zip(starts, np.r_[starts[1:], len(d)]):
         out[d[a]] = v[a:min(b, a + top)].mean()
+    return out
+
+
+def sidak_score(ts: np.ndarray, turn_doc: np.ndarray, doc_topics: np.ndarray, n_docs: int,
+                eligible: Optional[np.ndarray] = None) -> np.ndarray:
+    """Оценка звонка с поправкой на число реплик. Максимум новизны растёт с длиной звонка: в длинном разговоре больше
+    шансов на одну странную реплику (на звонках поддержки корреляция Спирмена максимума с числом реплик ≈ 0.5).
+    p реплики = доля реплик её темы с новизной не ниже; p звонка = 1 − (1 − p_min)^n (поправка Шидака на n реплик);
+    → −log10(p звонка). `eligible` — какие реплики участвуют (например, не короче 4 слов); у звонка без них — 0."""
+    ts, turn_doc = np.asarray(ts, dtype=np.float64), np.asarray(turn_doc)
+    m = np.ones(len(ts), dtype=bool) if eligible is None else np.asarray(eligible, dtype=bool)
+    out = np.zeros(n_docs)
+    if not m.any():
+        return out
+    d = pd.DataFrame({"doc": turn_doc[m], "nov": ts[m]})
+    d["topic"] = np.asarray(doc_topics)[d["doc"].values]
+    g = d.groupby("topic")["nov"]
+    d["p"] = g.rank(ascending=False, method="max") / g.transform("size")
+    a = d.groupby("doc")["p"].agg(["min", "size"])
+    pc = 1.0 - (1.0 - a["min"].values) ** a["size"].values
+    out[a.index.values] = -np.log10(np.clip(pc, 1e-12, None))
     return out
 
 

@@ -6,8 +6,9 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from lurker.anomaly import (assign_topics, centroid_score, coherence_score, fix_roles, knn_score, lof_score, offtopic_score,  # noqa: E402
-                            precision_at_k, ranking_metrics, recall_at_k, relevance_score, robust_z, turn_novelty, turn_score)
+from lurker.anomaly import (assign_topics, centroid_score, coherence_score, doc_max, fix_roles, knn_score, lof_score, offtopic_score,  # noqa: E402
+                            precision_at_k, ranking_metrics, recall_at_k, relevance_score, robust_z, sidak_score, turn_novelty,
+                            turn_score)
 
 
 def unit(M):
@@ -115,6 +116,32 @@ class AnomalyTests(unittest.TestCase):
         self.assertEqual(same, fixed)
         neutral = [("op", "да"), ("cl", "нет")]
         self.assertEqual(fix_roles(neutral), (neutral, False))
+
+    def test_fix_roles_stt_garbled_greeting(self):
+        """Искажения STT: «чем» съедено, «линии» — «лини»; клиент тоже говорит «меня зовут» — решает приветствие в начале."""
+        call = [("cl", "добрый день зблокировать могу помочь"), ("op", "здравствуйте меня зовут алексей у меня нет интернета"),
+                ("cl", "проверю оставайтесь на лини"), ("op", "хорошо жду")]
+        fixed, swapped = fix_roles(call)
+        self.assertTrue(swapped)
+        self.assertEqual(fixed[0][0], "op")
+        self.assertFalse(fix_roles(fixed)[1])
+        self.assertFalse(fix_roles([("op", "да"), ("cl", "угу")])[1])          # нет признаков — не трогать
+
+    def test_sidak_score_corrects_for_call_length(self):
+        """Длинный звонок с обычными репликами не должен обгонять короткий с одной действительно странной: по максимуму
+        обгоняет (в 200 репликах найдётся крайняя), с поправкой на число реплик — нет."""
+        rng = np.random.default_rng(1)
+        doc = np.r_[np.zeros(5, int), np.ones(200, int), np.repeat(np.arange(2, 20), 10)]
+        ts = rng.uniform(0, 0.78, len(doc))
+        ts[0] = 0.795                                    # короткий звонок 0: одна необычная реплика
+        ts[5] = 0.799                                    # длинный звонок 1: максимум чуть выше, но реплик в 40 раз больше
+        topics = np.zeros(20, int)
+        mx = doc_max(ts, doc, 20)
+        self.assertGreater(mx[1], mx[0])
+        sd = sidak_score(ts, doc, topics, 20)
+        self.assertGreater(sd[0], sd[1])
+        self.assertEqual(int(np.argmax(sd)), 0)
+        self.assertEqual(sidak_score(ts, doc, topics, 21, eligible=doc != 3)[3], 0.0)    # звонок без допустимых реплик
 
 
 if __name__ == "__main__":
