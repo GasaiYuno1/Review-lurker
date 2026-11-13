@@ -39,6 +39,8 @@ python3 research/make_notebooks.py
 ```
 python3 research/run_comments.py tickets.xlsx --text "Комментарий" --date "Дата" [--llm configs/llamacpp.yaml]   # USER-bge-m3; длинные тексты: --model user-base
 python3 research/run_calls.py calls.csv --text "Расшифровка" --id "ID"      # или --long --id --speaker --text
+python3 research/run_calls.py calls.csv --text "Расшифровка" --id "ID" --roles auto --topic "Тема" --date "Дата" \
+        --llm configs/haiku.yaml        # роли по приветствию, всплески по дням, проверка каждого звонка LLM по чек-листу
 ```
 Результаты — в `build/run_comments/` и `build/run_calls/` (таблицы кластеров, разметка строк, лист ручной проверки,
 топ подозрительных звонков). Подробности и ожидаемое время — `research/REPORT.md`.
