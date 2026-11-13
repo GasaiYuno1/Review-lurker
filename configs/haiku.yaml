@@ -1,0 +1,16 @@
+# Claude Haiku через OpenAI-совместимый endpoint Anthropic (платно; ключ — в LLM_API_KEY, console.anthropic.com).
+# На прод-данных заказчика — основная LLM проверки звонков по чек-листу и названий тем (research/REPORT.md).
+# Порядок цены: Haiku 5.5 — $0.10 / $0.50 за 1 млн токенов (до 100 тыс. токенов в запросе); звонок по чек-листу —
+# ≈ 4–6 тыс. токенов, т.е. ≈ $0.5–1 на 1 000 звонков. Endpoint и пресет на живом ключе в этом окружении не проверены.
+# Запуск: python3 research/run_calls.py calls.csv --text ... --llm configs/haiku.yaml [--llm-max 200]
+llm:
+  base_url: https://api.anthropic.com/v1
+  model: claude-haiku-5-5
+  api_key_env: LLM_API_KEY
+  temperature: null      # Haiku 5.5 отвергает параметры сэмплинга — не передаём
+  timeout_s: 120
+  max_retries: 4
+  batch_size: 20
+  rate_limit_rpm: 0
+  json_mode: false
+  max_tokens: 1024

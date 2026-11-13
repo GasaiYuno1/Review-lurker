@@ -20,7 +20,7 @@ class LLMConfig:
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
     api_key_env: str = "LLM_API_KEY"
-    temperature: float = 0.0
+    temperature: Optional[float] = 0.0   # None — не передавать (модели, которые отвергают параметр)
     timeout_s: float = 60.0
     max_retries: int = 3
     batch_size: int = 20

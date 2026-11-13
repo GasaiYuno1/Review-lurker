@@ -115,7 +115,9 @@ Stop-хук «Unverified» (если всё же сработает) не вып
   обрывков STT; `--keep`; повторы id схлопываются, автоответчики, голосовые ассистенты и звонки из одной реплики
   пропускаются; эмбеддинги — по уникальным репликам, со списком текстов рядом с кэшем: новый прогон досчитывает только
   новые реплики; центрирование и новизна — по уникальным репликам с весами повторов (`center(weights=)`,
-  `turn_novelty(rows=, query=)`), месяц звонков — 1.75 млн реплик — без развёрнутой матрицы в памяти).
+  `turn_novelty(rows=, query=)`), месяц звонков — 1.75 млн реплик — без развёрнутой матрицы в памяти; `--date` — всплески
+  тем по дням со словами и сценарий аварии (spikes.csv, outage_days.csv); словарь брани — rude_op/rude_cl, rude_hits.csv;
+  `--llm <конфиг>` — каждый звонок по чек-листу (checklist.csv, раздел в top.md), `--llm-max`, `--llm-workers`).
 
 ## Структура
 - `src/lurker/` (ядро): `clean` (`RuleCleaner`, `LLMCleaner`, `client_turns`, `remove_boilerplate`), `dirty` (`make_dirty`: уровни tz/smm/mix/alt),
@@ -124,7 +126,11 @@ Stop-хук «Unverified» (если всё же сработает) не вып
   `evaluate` — NMI/ARI/чистота/B³, `knn_overlap`, `knn_label_share`), `anomaly` (`assign_topics`, `robust_z`,
   `centroid/knn/lof/turn/coherence/relevance_score`, `turn_novelty`, `doc_max`, `sidak_score`, `split_dialog`, `fix_roles`, `ranking_metrics`),
   `clean` также `remove_boilerplate`, `dirty` уровень `alt` (незнакомые очистке форматы), `summarize` (`describe_cluster`, `name_topics`, …),
-  `llm`, `config`, `text`, `data`, `dynamics`, `period`, `preclass`, `pipeline`, `cli`.
+  `llm`, `config`, `text`, `data`, `dynamics`, `period`, `preclass`, `pipeline`, `cli`; из прода: `incidents` (`daily_spikes`,
+  `spike_words`, `outage_days` — сбои по дням без разметки), `checklist` (`check_call` — звонок в LLM по чек-листу: A/R/T/S/N,
+  итог D/P/X/U, повтор), `anomaly.RUDE`/`rude_hits` (словарь брани; в STT много ложных). `LLMConfig.temperature: null` —
+  не передавать (Claude 5.x отвергает параметры сэмплинга); пресет `configs/haiku.yaml` (OpenAI-совместимый endpoint
+  Anthropic, на живом ключе не проверен).
 - `src/lurker/service/` (отделяемое): `concept`, `query`, `assistant` — сценарий «вопрос к данным» из ТЗ v1. `ui/` — Streamlit
   (`ui/app.py`, `ui/ui_smoke.py`, свои requirements).
 - `research/`: `common.py` (пути, загрузка с кэшем); `comments/` — `prepare_data`, `embed`, `experiment`, `sensitivity`,

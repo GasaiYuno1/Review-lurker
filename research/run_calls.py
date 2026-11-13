@@ -23,6 +23,15 @@
   topics.csv       — темы: размер, ключевые слова, доля помеченных;
   top.md           — топ-N для ручной проверки.
 Порог z ≥ 2 на тестовых данных помечает ~3.5% звонков; это список на проверку человеком, а не автоматическое решение.
+
+Дополнительно:
+  --date <колонка> — spikes.csv: всплески тем по дням (пуассон, поправка на число клеток) со словами, которые их объясняют;
+                     outage_days.csv: доля звонков дня со сценарием аварии в словах оператора («ведутся работы» …);
+  словарь брани    — rude_op / rude_cl в calls_scored.csv, rude_hits.csv (на ручной разбор: в STT много ложных);
+  --llm <конфиг>   — checklist.csv: каждый звонок в LLM по чек-листу (lurker.checklist): A — нарушение, S — показать
+                     контролю, N — норма; итог для клиента (решено / передано / не смогли); повторное обращение.
+                     На прод-данных это единственный способ, который ловит конкретные нарушения (Haiku: 45–46 из 54
+                     подложенных при 1 ложной на 54 обычных); новизна нужна для другого — сбои, звонки не по теме.
 """
 from __future__ import annotations
 
@@ -39,7 +48,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from lurker.anomaly import (AUTOANSWER, CLIENT_LABELS, OP_LABELS, OP_MARKERS, assign_topics, center, doc_max, fix_roles,  # noqa: E402
-                            robust_z, sidak_score, split_dialog, turn_novelty)
+                            robust_z, rude_hits, sidak_score, split_dialog, turn_novelty)
+from lurker.incidents import daily_counts, daily_spikes, outage_days, spike_words  # noqa: E402
 from lurker.cluster import cluster_embeddings  # noqa: E402
 from lurker.data import load_table  # noqa: E402
 from lurker.embed import ST_MODELS, get_embedder  # noqa: E402
@@ -108,7 +118,8 @@ def embed(texts: list[str], model: str, cache_dir: Path, what: str, chunk: int =
 def read_calls(a) -> tuple[list[str], list[list[tuple[str, str]]], pd.DataFrame]:
     """→ (id звонков, реплики [(op|cl, текст)], первая строка каждого звонка — для --topic и --keep)."""
     df = load_table(a.file)
-    extra = ([a.topic] if a.topic else []) + [c.strip() for c in (a.keep or "").split(",") if c.strip()]
+    extra = ([a.topic] if a.topic else []) + ([a.date] if getattr(a, "date", None) else []) + \
+        [c.strip() for c in (a.keep or "").split(",") if c.strip()]
     for c in [a.text] + ([a.id] if a.id else []) + ([a.speaker] if a.long else []) + extra:
         if c not in df.columns:
             raise SystemExit(f"нет колонки «{c}»; есть: {', '.join(df.columns)}")
@@ -131,6 +142,43 @@ def read_calls(a) -> tuple[list[str], list[list[tuple[str, str]]], pd.DataFrame]
     op = [x.strip() for x in a.op_labels.split(",")] if a.op_labels else OP_LABELS
     cl = [x.strip() for x in a.client_labels.split(",")] if a.client_labels else CLIENT_LABELS
     return ids, [split_dialog(t, op, cl) for t in df[a.text].fillna("").astype(str)], df
+
+
+def incidents_by_day(a, meta, calls, sc, kw, topics, out: Path) -> None:
+    """Всплески тем по дням (spikes.csv: тема, день, звонков, ожидалось, раз, слова дня) и сценарий аварии (outage_days.csv)."""
+    day = pd.to_datetime(meta[a.date], errors="coerce").dt.date.astype(str).tolist()
+    names = [kw.get(int(t), str(t)) for t in topics]
+    sp = daily_spikes(daily_counts(day, names))
+    texts = [" ".join(x for _, x in t) for t in calls]
+    if len(sp):
+        sp = sp.merge(spike_words(texts, day, names, sp)[["day", "topic", "words"]], on=["day", "topic"], how="left")
+    sp.to_csv(out / "spikes.csv", index=False)
+    od = outage_days([" ".join(x for s, x in t if s == "op") for t in calls], day)
+    od.to_csv(out / "outage_days.csv")
+    print(f"всплесков тем по дням: {len(sp)} → spikes.csv; сценарий аварии у оператора — {od.outage.sum() / max(od.calls.sum(), 1):.1%} "
+          f"звонков, дней с долей ≥ 2× медианы: {int((od.ratio_to_median >= 2).sum())} → outage_days.csv", flush=True)
+
+
+def llm_checklist(a, calls, sc, meta, out: Path) -> pd.DataFrame:
+    """Каждый звонок (или первые --llm-max) — в LLM по чек-листу; ответы дописываются в checklist.csv и calls_scored.csv."""
+    from concurrent.futures import ThreadPoolExecutor
+    from lurker.checklist import check_call
+    from lurker.config import load_config
+    from lurker.llm import LLMClient
+    llm = LLMClient(load_config(a.llm).llm, cache_dir=out / ".cache")
+    n = len(calls) if not a.llm_max else min(a.llm_max, len(calls))
+    tp = meta[a.topic].fillna("").astype(str).tolist() if a.topic else [None] * len(calls)
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=max(1, a.llm_workers)) as ex:
+        res = list(ex.map(lambda d: check_call(calls[d], llm, tp[d] or None), range(n)))
+    ck = pd.DataFrame(res).add_prefix("llm_")
+    ck.insert(0, "id", sc["id"].iloc[:n].values)
+    ck.to_csv(out / "checklist.csv", index=False)
+    sc = sc.merge(ck, on="id", how="left")
+    lab = ck.llm_label.value_counts()
+    print(f"LLM по чек-листу: {n} звонков за {time.time() - t0:.0f} с, токенов {llm.usage}; нарушение (A) — {int(lab.get('A', 0))}, "
+          f"показать контролю (S) — {int(lab.get('S', 0))}, повторных обращений {int(ck.llm_repeat.sum())} → checklist.csv", flush=True)
+    return sc
 
 
 def main(argv=None) -> int:
@@ -161,6 +209,11 @@ def main(argv=None) -> int:
                          "звонки не всплывают только из-за длины)")
     ap.add_argument("--min-words", type=int, default=1, help="реплики оператора короче стольких слов не оцениваются (обрывки STT)")
     ap.add_argument("--keep", help="колонки исходной таблицы через запятую — перенести в calls_scored.csv (дата, оператор, …)")
+    ap.add_argument("--date", help="колонка с датой звонка — всплески тем по дням, слова всплесков, сценарий аварии по дням")
+    ap.add_argument("--llm", help="конфиг LLM (configs/haiku.yaml, configs/llamacpp.yaml …) — проверка каждого звонка по "
+                                  "чек-листу: нарушение / показать контролю / норма, итог для клиента, повторное обращение")
+    ap.add_argument("--llm-max", type=int, default=0, help="--llm: проверить не больше стольких звонков (0 — все)")
+    ap.add_argument("--llm-workers", type=int, default=4, help="--llm: параллельных запросов")
     ap.add_argument("--out", default=str(ROOT / "build" / "run_calls"))
     a = ap.parse_args(argv)
     if a.long and not (a.id and a.speaker):
@@ -245,7 +298,19 @@ def main(argv=None) -> int:
                      "score": round(float(score[d]), 4), "flagged": bool(flag[d]), "worst_operator_turn": shown[w],
                      "client_before": prev[-1] if prev else "", "n_turns": len(calls[d]), "roles_swapped": bool(swapped[d]),
                      **{c: meta.at[d, c] for c in keep_cols}})
-    sc = pd.DataFrame(rows).sort_values("z", ascending=False)
+    sc = pd.DataFrame(rows)
+    rude = [rude_hits(t) for t in calls]                            # словарь брани: срабатывания — на ручной разбор
+    sc["rude_op"], sc["rude_cl"] = [len(h["op"]) for h in rude], [len(h["cl"]) for h in rude]
+    pd.DataFrame([{"id": ids[d], "pos": j, "words": w, "operator_turn": calls[d][j][1]}
+                  for d, h in enumerate(rude) for j, w in h["op"]],
+                 columns=["id", "pos", "words", "operator_turn"]).to_csv(out / "rude_hits.csv", index=False)
+    print(f"словарь брани: у оператора {int((sc.rude_op > 0).sum())} звонков, у клиента {int((sc.rude_cl > 0).sum())} "
+          f"→ rude_hits.csv (на ручной разбор: в STT много ложных срабатываний)", flush=True)
+    if a.date:
+        incidents_by_day(a, meta, calls, sc, kw, topics, out)
+    if a.llm:
+        sc = llm_checklist(a, calls, sc, meta, out)
+    sc = sc.sort_values("z", ascending=False)
     sc.to_csv(out / "calls_scored.csv", index=False)
     tp = sc.groupby(["topic", "topic_keywords"]).agg(calls=("id", "size"), flagged=("flagged", "mean")).reset_index()
     tp.sort_values("calls", ascending=False).to_csv(out / "topics.csv", index=False)
@@ -258,6 +323,10 @@ def main(argv=None) -> int:
         if r["client_before"]:
             md.append(f"> Клиент: {r['client_before'][:300]}")
         md += [f"> **Оператор: {r['worst_operator_turn'][:400]}**", ""]
+    if "llm_label" in sc.columns:
+        bad = sc[sc.llm_label == "A"]
+        md += ["# Нарушения по чек-листу LLM", "", f"{len(bad)} звонков (на ручную проверку):", ""]
+        md += [f"- {r['id']} — {r['llm_note']}" for _, r in bad.iterrows()]
     (out / "top.md").write_text("\n".join(md), encoding="utf-8")
     print(f"помечено {int(sc.flagged.sum())} из {len(sc)} ({rule}) → {out}/calls_scored.csv, topics.csv, top.md", flush=True)
     return 0

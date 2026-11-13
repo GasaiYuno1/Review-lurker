@@ -75,6 +75,26 @@ AUTOANSWER = re.compile(r"абонент\w*\s+(?:сейчас\s+)?не\s+мож�
                         r"я\s+(?:\w+\s+)?голосов\w*\s+а?сс?ист|абонент\w*\s+(?:сейчас\s+|пока\s+)?(?:не\s+|\w{1,2}\s+)?в\s+сети|"
                         r"попросили\s+отвечать\s+на\s+звонки", re.IGNORECASE)
 
+# Брань и оскорбления (целые слова). На месяце звонков заказчика у оператора 41 срабатывание на 42 600 звонков — все
+# ложные (искажения STT вроде «для» → «бля», «достали кабель», реплики клиента под меткой оператора): срабатывания —
+# список на ручной разбор, а не нарушение. Классификаторы токсичности на расшифровках STT неприменимы.
+RUDE = re.compile(r"\b(?:бля\w*|нахер|нахрен|нахуй|ху[йеёяи]\w*|пизд\w*|[её]ба[нлт]\w*|выеб\w*|заеб\w*|сука|суки|сучк\w*|"
+                  r"мудак\w*|дебил\w*|идиот\w*|придур\w*|дура|дурак\w*|урод\w*|тупой|тупая|тупые|заткнись|отвали|"
+                  r"отвяжись|задолбал\w*|достал[аи]?)\b")
+
+
+def rude_hits(turns: Sequence[tuple[str, str]], min_words: int = 3) -> dict:
+    """Срабатывания словаря брани по ролям: {"op": [(номер реплики, слова)], "cl": [...]}; реплики короче min_words — мимо."""
+    out: dict = {"op": [], "cl": []}
+    for j, (s, x) in enumerate(turns):
+        if len(x.split()) < min_words:
+            continue
+        m = RUDE.findall(x.lower())
+        if m:
+            out["op" if s == "op" else "cl"].append((j, ",".join(sorted(set(m)))))
+    return out
+
+
 def fix_roles(turns: Sequence[tuple[str, str]], markers: re.Pattern = OP_MARKERS, client_markers: re.Pattern | None = CLIENT_MARKERS,
               greeting: re.Pattern | None = GREETING, greeting_weight: float = 3.0, head: int = 6) -> tuple[list[tuple[str, str]], bool]:
     """Счёт стороны = операторские фразы − фразы клиента (+ `greeting_weight` за приветствие в первых `head` репликах;

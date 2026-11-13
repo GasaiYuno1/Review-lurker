@@ -44,11 +44,9 @@ class LLMClient:
         messages = [dict(m) for m in messages]
         if self.cfg.message_suffix and messages and messages[-1].get("role") == "user":
             messages[-1]["content"] = str(messages[-1]["content"]) + self.cfg.message_suffix
-        body: dict[str, Any] = {
-            "model": self.cfg.model,
-            "messages": messages,
-            "temperature": self.cfg.temperature if temperature is None else temperature,
-        }
+        body: dict[str, Any] = {"model": self.cfg.model, "messages": messages}
+        if self.cfg.temperature is not None:        # temperature: null в конфиге — не слать (Claude 5.x её отвергает)
+            body["temperature"] = self.cfg.temperature if temperature is None else temperature
         if max_tokens or self.cfg.max_tokens:
             body["max_tokens"] = max_tokens or self.cfg.max_tokens
         if self.cfg.extra_body:
