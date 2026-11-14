@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 from lurker import llm as llm_mod  # noqa: E402
 from lurker.anomaly import rude_hits  # noqa: E402
-from lurker.checklist import check_call, format_dialog, parse_answer  # noqa: E402
+from lurker.checklist import check_call, format_dialog, note_kind, parse_answer  # noqa: E402
 from lurker.config import LLMConfig  # noqa: E402
 from lurker.incidents import daily_counts, daily_spikes, outage_days, spike_words  # noqa: E402
 from lurker.llm import FakeLLM, LLMClient  # noqa: E402
@@ -79,6 +79,13 @@ class ChecklistTests(unittest.TestCase):
         self.assertIn("Тема из разметки: Интернет", seen[0])
         self.assertIn("КЛ: не работает интернет", format_dialog([("cl", "не   работает интернет")]))
 
+    def test_note_kind(self):
+        self.assertEqual(note_kind("оператор груб и перебивает клиента"), "грубость")
+        self.assertEqual(note_kind("неверно назвал стоимость выезда"), "неверная информация")
+        self.assertEqual(note_kind("отказ оформить заявку"), "отказ помогать")
+        self.assertEqual(note_kind("ушёл в личный разговор"), "личное")
+        self.assertEqual(note_kind(""), "прочее")
+
     def test_temperature_null_not_sent(self):
         bodies = []
         for temp, expect in ((None, False), (0.0, True)):
@@ -127,9 +134,12 @@ class RunCallsProdOptionsTests(unittest.TestCase):
             sc = pd.read_csv(Path(tmp) / "calls_scored.csv").set_index("id")
             self.assertEqual(sc.loc["домофон-5", "rude_op"], 1)
             self.assertEqual(sc.loc["домофон-5", "llm_label"], "A")
+            self.assertEqual(sc.loc["домофон-5", "llm_kind"], "грубость")
             self.assertEqual((sc.llm_label == "A").sum(), 1)
             self.assertTrue((Path(tmp) / "checklist.csv").exists())
-            self.assertIn("домофон-5", (Path(tmp) / "top.md").read_text(encoding="utf-8").split("# Нарушения по чек-листу LLM")[1])
+            llm_md = (Path(tmp) / "top.md").read_text(encoding="utf-8").split("# Нарушения по чек-листу LLM")[1]
+            self.assertIn("Грубость — 1", llm_md)
+            self.assertIn("домофон-5", llm_md)
 
 
 if __name__ == "__main__":

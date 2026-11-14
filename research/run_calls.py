@@ -162,7 +162,7 @@ def incidents_by_day(a, meta, calls, sc, kw, topics, out: Path) -> None:
 def llm_checklist(a, calls, sc, meta, out: Path) -> pd.DataFrame:
     """Каждый звонок (или первые --llm-max) — в LLM по чек-листу; ответы дописываются в checklist.csv и calls_scored.csv."""
     from concurrent.futures import ThreadPoolExecutor
-    from lurker.checklist import check_call
+    from lurker.checklist import check_call, note_kind
     from lurker.config import load_config
     from lurker.llm import LLMClient
     llm = LLMClient(load_config(a.llm).llm, cache_dir=out / ".cache")
@@ -173,10 +173,12 @@ def llm_checklist(a, calls, sc, meta, out: Path) -> pd.DataFrame:
         res = list(ex.map(lambda d: check_call(calls[d], llm, tp[d] or None), range(n)))
     ck = pd.DataFrame(res).add_prefix("llm_")
     ck.insert(0, "id", sc["id"].iloc[:n].values)
+    ck["llm_kind"] = [note_kind(nt) if lb == "A" else "" for lb, nt in zip(ck.llm_label, ck.llm_note)]
     ck.to_csv(out / "checklist.csv", index=False)
     sc = sc.merge(ck, on="id", how="left")
     lab = ck.llm_label.value_counts()
     print(f"LLM по чек-листу: {n} звонков за {time.time() - t0:.0f} с, токенов {llm.usage}; нарушение (A) — {int(lab.get('A', 0))}, "
+          f"из них «грубость» — {int((ck.llm_kind == 'грубость').sum())}, "
           f"показать контролю (S) — {int(lab.get('S', 0))}, повторных обращений {int(ck.llm_repeat.sum())} → checklist.csv", flush=True)
     return sc
 
@@ -325,8 +327,14 @@ def main(argv=None) -> int:
         md += [f"> **Оператор: {r['worst_operator_turn'][:400]}**", ""]
     if "llm_label" in sc.columns:
         bad = sc[sc.llm_label == "A"]
-        md += ["# Нарушения по чек-листу LLM", "", f"{len(bad)} звонков (на ручную проверку):", ""]
-        md += [f"- {r['id']} — {r['llm_note']}" for _, r in bad.iterrows()]
+        rude, rest = bad[bad.llm_kind == "грубость"], bad[bad.llm_kind != "грубость"]
+        md += ["# Нарушения по чек-листу LLM", "", f"{len(bad)} звонков. Грубость — {len(rude)}, на ручную проверку "
+               "(на данных заказчика подтверждалась каждая третья):", ""]
+        md += [f"- {r['id']} — {r['llm_note']}" for _, r in rude.iterrows()]
+        if len(rest):
+            md += ["", f"Остальные пометки — {len(rest)} (неверная информация, отказ, личное: без справочника правил "
+                   "компании чаще ложные):", ""]
+            md += [f"- {r['id']} [{r['llm_kind']}] — {r['llm_note']}" for _, r in rest.iterrows()]
     (out / "top.md").write_text("\n".join(md), encoding="utf-8")
     print(f"помечено {int(sc.flagged.sum())} из {len(sc)} ({rule}) → {out}/calls_scored.csv, topics.csv, top.md", flush=True)
     return 0
