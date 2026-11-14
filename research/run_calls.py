@@ -159,6 +159,14 @@ def incidents_by_day(a, meta, calls, sc, kw, topics, out: Path) -> None:
           f"звонков, дней с долей ≥ 2× медианы: {int((od.ratio_to_median >= 2).sum())} → outage_days.csv", flush=True)
 
 
+def _check_one(check_call, turns, llm, topic):
+    """Ошибка на одном звонке (сеть, лимит, странный ответ) не роняет весь прогон: звонок получает метку «?»."""
+    try:
+        return check_call(turns, llm, topic)
+    except Exception as e:                                          # noqa: BLE001
+        return {"label": "?", "outcome": "U", "repeat": 0, "note": f"ошибка LLM: {type(e).__name__}"}
+
+
 def llm_checklist(a, calls, sc, meta, out: Path) -> pd.DataFrame:
     """Каждый звонок (или первые --llm-max) — в LLM по чек-листу; ответы дописываются в checklist.csv и calls_scored.csv."""
     from concurrent.futures import ThreadPoolExecutor
@@ -170,15 +178,15 @@ def llm_checklist(a, calls, sc, meta, out: Path) -> pd.DataFrame:
     tp = meta[a.topic].fillna("").astype(str).tolist() if a.topic else [None] * len(calls)
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=max(1, a.llm_workers)) as ex:
-        res = list(ex.map(lambda d: check_call(calls[d], llm, tp[d] or None), range(n)))
+        res = list(ex.map(lambda d: _check_one(check_call, calls[d], llm, tp[d] or None), range(n)))
     ck = pd.DataFrame(res).add_prefix("llm_")
     ck.insert(0, "id", sc["id"].iloc[:n].values)
-    ck["llm_kind"] = [note_kind(nt) if lb == "A" else "" for lb, nt in zip(ck.llm_label, ck.llm_note)]
+    ck["llm_kind"] = [note_kind(nt, lb) for lb, nt in zip(ck.llm_label, ck.llm_note)]
     ck.to_csv(out / "checklist.csv", index=False)
     sc = sc.merge(ck, on="id", how="left")
     lab = ck.llm_label.value_counts()
     print(f"LLM по чек-листу: {n} звонков за {time.time() - t0:.0f} с, токенов {llm.usage}; нарушение (A) — {int(lab.get('A', 0))}, "
-          f"из них «грубость» — {int((ck.llm_kind == 'грубость').sum())}, "
+          f"из них «грубость» — {int((ck.llm_kind == 'грубость').sum())}, без ответа (?) — {int((ck.llm_label == '?').sum())}, "
           f"показать контролю (S) — {int(lab.get('S', 0))}, повторных обращений {int(ck.llm_repeat.sum())} → checklist.csv", flush=True)
     return sc
 
@@ -312,14 +320,15 @@ def main(argv=None) -> int:
         incidents_by_day(a, meta, calls, sc, kw, topics, out)
     if a.llm:
         sc = llm_checklist(a, calls, sc, meta, out)
-    sc = sc.sort_values("z", ascending=False)
+    key = "score" if a.score == "sidak" else "z"                  # sidak помечает по p — и топ по нему же
+    sc = sc.sort_values(key, ascending=False)
     sc.to_csv(out / "calls_scored.csv", index=False)
     tp = sc.groupby(["topic", "topic_keywords"]).agg(calls=("id", "size"), flagged=("flagged", "mean")).reset_index()
     tp.sort_values("calls", ascending=False).to_csv(out / "topics.csv", index=False)
 
     md = [f"# Подозрительные звонки: {Path(a.file).name}", "",
           f"{len(calls)} звонков, тем {len(tp)}, модель {a.model}, оценка {a.score}. Помечено {rule}: {int(sc.flagged.sum())} "
-          f"({sc.flagged.mean():.1%}). Ниже — топ-{min(a.top, len(sc))} по z (внутри своей темы).", ""]
+          f"({sc.flagged.mean():.1%}). Ниже — топ-{min(a.top, len(sc))} по {'−log10 p' if key == 'score' else 'z'} (внутри своей темы).", ""]
     for _, r in sc.head(a.top).iterrows():
         md += [f"## {r['id']} — z = {r['z']}", f"Тема: {r['topic_keywords']}", ""]
         if r["client_before"]:
@@ -328,9 +337,14 @@ def main(argv=None) -> int:
     if "llm_label" in sc.columns:
         bad = sc[sc.llm_label == "A"]
         rude, rest = bad[bad.llm_kind == "грубость"], bad[bad.llm_kind != "грубость"]
+        tone = sc[sc.llm_kind == "тон оператора"]
         md += ["# Нарушения по чек-листу LLM", "", f"{len(bad)} звонков. Грубость — {len(rude)}, на ручную проверку "
-               "(на данных заказчика подтверждалась каждая третья):", ""]
+               "(на данных заказчика подтверждалась примерно каждая третья):", ""]
         md += [f"- {r['id']} — {r['llm_note']}" for _, r in rude.iterrows()]
+        if len(tone):
+            md += ["", f"«Показать контролю» с пояснением о тоне оператора — {len(tone)} (подтверждалась примерно каждая "
+                   "шестая):", ""]
+            md += [f"- {r['id']} — {r['llm_note']}" for _, r in tone.iterrows()]
         if len(rest):
             md += ["", f"Остальные пометки — {len(rest)} (неверная информация, отказ, личное: без справочника правил "
                    "компании чаще ложные):", ""]

@@ -1,13 +1,15 @@
 """Проверка звонков LLM по чек-листу контролёра: на звонок — метка, итог для клиента и признак повторного обращения.
 
 На прод-данных заказчика (research/REPORT.md) это единственный способ, который ловит конкретные нарушения: из 54
-подложенных в настоящий поток Claude Haiku находит 45–46 при 1 ложной тревоге на 54 обычных; поиск по новизне — 4.
+подложенных в настоящий поток Claude Haiku находит 45–46 при 1 ложной тревоге на 126 обычных; поиск по новизне — 4.
 Модель задаётся конфигом LLM (configs/*.yaml): облачная (configs/haiku.yaml) или локальная (Qwen3-8B и крупнее; 4B
 не годится). Звонок отправляется целиком с ролями ОП/КЛ; ответ — JSON.
 
 На всём месяце звонков заказчика (42 600, Haiku) пометка A стоит у 1.4% звонков, но подтверждается в основном вид
-«грубость» (note_kind): 6 из 20 и ещё 4 спорных; «неверная информация» и «отказ помогать» без справочника правил
-компании почти всегда ложные — модель принимает регламентные отказы за ошибки. Поэтому контролю — сначала «грубость».
+«грубость» (note_kind): при чтении — около трети, ещё треть спорных; «неверная информация» и «отказ помогать» без
+справочника правил компании почти всегда ложные — модель принимает регламентные отказы за ошибки. Среди S пояснения
+о поведении оператора («тон оператора») подтверждаются реже — примерно каждое шестое. Поэтому контролю — сначала
+«грубость», потом «тон оператора»; полнота одного прохода модели неизвестна (повторный прогон дня совпал на 8 из ≈ 20 A).
 
 Метки (если подходят несколько — первая по списку):
   A — нарушение: грубость или хамство оператора, бред/явно неверная информация, личный разговор не по работе, отказ помогать;
@@ -53,15 +55,29 @@ U — неясно (обрыв, не разговор).
 Ответ — JSON: {{"label": "...", "outcome": "...", "repeat": 0, "note": "..."}}"""
 
 LABELS, OUTCOMES = "ARTSN", "DPXU"
-NOTE_KINDS = [("грубость", r"груб|хам|оскорб|раздраж|повыш|пренебр|неуваж|сарказ|издев|перебива"),
+NOTE_KINDS = [("грубость", r"груб|хам|оскорб|раздраж|повы[сш]\w* (?:голос|тон)|пренебр|неуваж|сарказ|издев|перебива|резо?к"
+                             r"|насмеш|снисход|язвит|упр[её]к|колк|высокомер|некоррект|невежлив|нетерпел|отчитыва|бран|матер"
+                             r"|нецензур"),
               ("неверная информация", r"невер|ошиб|противореч|неправ|дезинф|бред|путан|неточн"),
               ("отказ помогать", r"отказ|не помог|отказыв|отфутбол|не стал"),
               ("личное", r"личн|не по теме|не по работе|посторон")]
 
 
-def note_kind(note) -> str:
-    """Пояснение модели к пометке A → вид нарушения (первый подошедший из NOTE_KINDS) или «прочее»."""
-    n = str(note or "").lower()
+# отрицание и слова о клиенте — не про оператора: «оператор не груб», «клиент резок, оператор корректен»
+_NOT_OPERATOR = re.compile(r"\bне\s+(?:был\w*\s+)?(?:груб|хам|перебива|раздраж|резо?к)\w*"
+                           r"|клиент\w*\s+(?:(?!оператор)[^\s,.;]+\s+){0,2}?(?:груб|хам|раздраж|резо?к|руга|бран|матер|саркаст|агресс)\w*")
+OPERATOR_TONE = re.compile(r"оператор\w*\s+(?:[^\s,.;]+\s+){0,3}?(?:перебива|раздраж|резо?к|спорит|пренебреж|груб|колк|насмеш"
+                           r"|снисход|невежлив|некоррект|нетерпел|повы[сш]|обрыва|язвит|давит|отчитыва|ирони)")
+
+
+def note_kind(note, label: str = "A") -> str:
+    """Пояснение модели → вид пометки. A: первый подошедший из NOTE_KINDS или «прочее». S: «тон оператора», если
+    пояснение говорит о поведении оператора (перебивает, резок, раздражён…), иначе пусто. Прочие метки — пусто."""
+    n = _NOT_OPERATOR.sub(" ", str(note or "").lower())
+    if label == "S":
+        return "тон оператора" if OPERATOR_TONE.search(n) else ""
+    if label != "A":
+        return ""
     return next((k for k, pat in NOTE_KINDS if re.search(pat, n)), "прочее")
 
 
@@ -72,23 +88,40 @@ def format_dialog(turns: Sequence[tuple[str, str]], max_chars: int = 1500, max_t
     return text if len(text) <= max_total else text[:max_total] + "\n…"
 
 
+def _first_dict(x) -> dict:
+    if isinstance(x, dict):
+        return x
+    if isinstance(x, list):                                         # ответ списком: [{...}]
+        return next((e for e in x if isinstance(e, dict)), {})
+    return {}
+
+
+def _flag(x) -> int:
+    """repeat: 1 / "1" / 1.0 / true / "да" → 1; 0, пусто, непонятное → 0."""
+    if isinstance(x, bool):
+        return int(x)
+    s = str(x if x is not None else "").strip().lower()
+    try:
+        return int(float(s) != 0)
+    except ValueError:
+        return int(s in {"true", "да", "yes"})
+
+
 def parse_answer(raw) -> dict:
-    """Ответ модели → {label, outcome, repeat, note}; непонятное — label «?»."""
-    d = raw if isinstance(raw, dict) else {}
+    """Ответ модели → {label, outcome, repeat, note}; непонятное — label «?», итог «U»."""
+    d = _first_dict(raw)
     if not d and isinstance(raw, str):
         try:
-            d = parse_json(raw) or {}
+            d = _first_dict(parse_json(raw))
         except Exception:
+            d = {}
+        if not d:
             m = re.search(r"\b([ARTSN])\b", raw)
             d = {"label": m.group(1)} if m else {}
-    lab = str(d.get("label", "")).strip().upper()[:1]
-    out = str(d.get("outcome", "")).strip().upper()[:1]
-    try:
-        rep = int(str(d.get("repeat", 0)).strip() or 0)
-    except ValueError:
-        rep = 0
-    return {"label": lab if lab in LABELS else "?", "outcome": out if out in OUTCOMES else "U",
-            "repeat": 1 if rep else 0, "note": str(d.get("note", "") or "").strip()[:300]}
+    lab = str(d.get("label") or "").strip().upper()[:1]
+    out = str(d.get("outcome") or "").strip().upper()[:1]
+    return {"label": lab if lab and lab in LABELS else "?", "outcome": out if out and out in OUTCOMES else "U",
+            "repeat": _flag(d.get("repeat", 0)), "note": str(d.get("note", "") or "").strip()[:300]}
 
 
 def check_call(turns: Sequence[tuple[str, str]], llm, topic: Optional[str] = None) -> dict:

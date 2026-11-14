@@ -65,6 +65,13 @@ class ChecklistTests(unittest.TestCase):
         self.assertEqual(parse_answer("```json\n{\"label\": \"N\", \"outcome\": \"D\", \"repeat\": 0}\n```")["label"], "N")
         self.assertEqual(parse_answer('{"label": "Z", "outcome": "?"}'), {"label": "?", "outcome": "U", "repeat": 0, "note": ""})
         self.assertEqual(parse_answer("метка S, потому что конфликт")["label"], "S")
+        # из аудита: пустая метка/итог не проходят проверку как подстрока, repeat булевым и дробным, ответ списком
+        self.assertEqual(parse_answer({"label": "N"}), {"label": "N", "outcome": "U", "repeat": 0, "note": ""})
+        self.assertEqual(parse_answer({"label": "", "outcome": "", "repeat": True})["label"], "?")
+        self.assertEqual(parse_answer({"label": "N", "repeat": True})["repeat"], 1)
+        self.assertEqual(parse_answer({"label": "N", "repeat": "1.0"})["repeat"], 1)
+        self.assertEqual(parse_answer({"label": "N", "repeat": "false"})["repeat"], 0)
+        self.assertEqual(parse_answer([{"label": "a", "outcome": "x"}])["label"], "A")
 
     def test_check_call_prompt_and_answer(self):
         seen = []
@@ -85,6 +92,13 @@ class ChecklistTests(unittest.TestCase):
         self.assertEqual(note_kind("отказ оформить заявку"), "отказ помогать")
         self.assertEqual(note_kind("ушёл в личный разговор"), "личное")
         self.assertEqual(note_kind(""), "прочее")
+        self.assertEqual(note_kind("насмешливо отвечает клиенту"), "грубость")
+        self.assertEqual(note_kind("оператор повысил голос"), "грубость")
+        self.assertEqual(note_kind("неверно назвал повышение тарифа"), "неверная информация")
+        self.assertEqual(note_kind("оператор не груб, клиент резок"), "прочее")
+        self.assertEqual(note_kind("клиент резок, оператор раздражён и перебивает", "S"), "тон оператора")
+        self.assertEqual(note_kind("оператор корректен, клиент раздражён", "S"), "")
+        self.assertEqual(note_kind("оператор груб", "N"), "")
 
     def test_temperature_null_not_sent(self):
         bodies = []

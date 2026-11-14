@@ -113,6 +113,31 @@ class FalseStructureTests(unittest.TestCase):
         self.assertIn("не работает домофон", out)
 
 
+class AuditCasesTests(unittest.TestCase):
+    """Сценарии из аудита: переписка в одну строку, метка «Клиент:» перед обычным текстом, отчество перед точкой,
+    длинные номера счетов и карт."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rc = RuleCleaner(ner=False)
+
+    def test_one_line_dialog_keeps_client(self):
+        t = self.rc.clean("Мы: Здравствуйте, чем помочь? Клиент: у меня не работает интернет третий день, роутер мигает").text
+        self.assertIn("не работает интернет третий день", t)
+        self.assertNotIn("чем помочь", t)
+        t = self.rc.clean("Переписка: Клиент: интернет не работает второй день Мы: передали инженеру").text
+        self.assertEqual(t, "интернет не работает второй день")
+
+    def test_label_takes_only_capitalized_name(self):
+        self.assertEqual(self.rc.clean("Автор: просто ужасный сервис, второй день без связи").text,
+                         "просто ужасный сервис, второй день без связи")
+        self.assertEqual(self.rc.clean("ФИО: Иванов Пётр Сергеевич. Не работает домофон").text, "Не работает домофон")
+
+    def test_long_numbers(self):
+        t = self.rc.clean("Оплатил на счёт 40817810099910004312 и картой 4276 1234 5678 9012, деньги не пришли").text
+        self.assertEqual(t, "Оплатил на счёт и картой, деньги не пришли")
+
+
 class BoilerplateTests(unittest.TestCase):
     def test_removes_templates_keeps_content(self):
         topics = ["не работает домофон в первом подъезде", "пропал интернет после грозы вчера", "двойное списание абонплаты за март"]

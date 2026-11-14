@@ -26,6 +26,7 @@ EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?7|8)[\s(-]*9\d{2}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}(?!\d)|(?<!\d)(?<!\d[.,])\d{9,12}(?!\d)(?![.,]\d)"
                       r"|(?<![\d+])\(?9\d{2}\)?[\s-]\d{3}[\s-]\d{2}[\s-]\d{2}(?!\d)")        # «953-619-59-83» без кода страны
 HANDLE_RE = re.compile(r"(?<![\w.])@[A-Za-z0-9_.]{3,}")                              # ник «@ivan_petrov88»
+LONG_NUMBER_RE = re.compile(r"(?<!\d)\d{4}(?:[ -]\d{4}){3}(?!\d)|(?<!\d)\d{13,}(?!\d)")    # карта, счёт из 20 цифр
 ACCOUNT_RE = re.compile(r"(?:л/с|лс|лицев\w*\s+сч\w*|договор\w*|дог\.|заявк\w*|номер)\s*(?:№|#|n|:)?\s*\d{4,}", re.I)
 NUMBER_TAG_RE = re.compile(r"(?:№|#)\s*\d+")
 TIMESTAMP_RE = re.compile(r"\[\s*\d{1,2}:\d{2}(?::\d{2})?\s*\]")                       # «[14:02]» в выгрузках чатов
@@ -36,7 +37,9 @@ ADDRESS_RE = re.compile(
 ADDRESS_SHORT_RE = re.compile(r"\b[А-ЯЁ][а-яё]+\s+\d{1,3}-\d{1,4}\b")            # «Лесная 28-149»
 ADDRESS_LABEL_RE = re.compile(r"адрес\s*:\s*[^\n|;]{1,60}?(?=[\n|;]|\s{2}|$|,\s*(?:тел|кв|л/с|\+|8\d|email))", re.I)
 # метка + само имя (1–3 слова с заглавной, инициалы), не «всё до конца строки»: в однострочном тексте это съедало весь отзыв
-FIO_LABEL_RE = re.compile(r"\b(?:фио|ф\.и\.о\.?|имя|контакт|автор|клиент)\s*:\s*(?:[А-ЯЁ][а-яё]+(?:\s+|$)){0,3}(?:[А-ЯЁ]\.\s?){0,2}", re.I)
+# метка — без учёта регистра, имя — только слова с заглавной: иначе «Клиент: интернет не работает» теряло три слова
+FIO_LABEL_RE = re.compile(r"\b(?i:фио|ф\.и\.о\.?|имя|контакт|автор|клиент)\s*:\s*(?:[А-ЯЁ][а-яё]+(?:\s+|$|(?=[.,;!?)]))){0,3}"
+                          r"(?:[А-ЯЁ]\.\s?){0,2}")
 PATR = r"(?:ович|евич|ьич|ич|овна|евна|ична|инична)"
 FIO_FULL_RE = re.compile(r"\b[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+" + PATR + r"\b")      # Фамилия Имя Отчество
 FIO_NAME_PATR_RE = re.compile(r"\b[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+" + PATR + r"\b")                 # Имя Отчество
@@ -49,6 +52,7 @@ SUMMARY_RE = re.compile(r"(?:итог|саммари|резюме|summary|сут
 OUR_LINE_RE = re.compile(r"(?:^|\n)\s*(?:мы|оператор|поддержка|we)\s*:.*", re.I)
 SPEAKER_RE = re.compile(r"(?:^|\n|\|\s*|\s/\s*)\s*(клиент|абонент|пользователь|client|мы|оператор|поддержка|we)\s*:", re.I)
 CLIENT_SPEAKERS = {"клиент", "абонент", "пользователь", "client"}
+INLINE_SPEAKER_RE = re.compile(r"\s+(?=(?:Клиент|Абонент|Пользователь|Мы|Оператор|Поддержка)\s*:)")
 
 
 def client_turns(text: str) -> list[str]:
@@ -134,6 +138,7 @@ class RuleCleaner:
         text = sub(EMAIL_RE, "email", text)          # раньше ссылок: иначе домен «yandex.ru» съедается как ссылка, остаётся «ivan.petrov@»
         text = sub(URL_RE, "url", text)
         text = sub(TIMESTAMP_RE, "number", text)
+        text = sub(LONG_NUMBER_RE, "account", text)                 # раньше телефонов: иначе съедаются куски счёта
         text = sub(PHONE_RE, "phone", text)
         text = sub(FIO_LABEL_RE, "name", text)
         text = sub(ADDRESS_LABEL_RE, "address", text)
@@ -165,6 +170,8 @@ class RuleCleaner:
     def _extract_content(self, text: str, removed: Counter) -> tuple[str, str]:
         if not self._looks_structured(text):
             return text, "plain"
+        if "\n" not in text.strip():                                # переписка в одну строку (экспорт в CSV): реплики
+            text = INLINE_SPEAKER_RE.sub("\n", text)                # по меткам с заглавной, иначе «Мы: …» съедало всё
         m = SUMMARY_RE.search(text)
         if m:
             removed["structure_summary"] += 1
