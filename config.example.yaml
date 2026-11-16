@@ -1,0 +1,41 @@
+# Скопировать в config.yaml (он в .gitignore) и заполнить.
+# Ключ API берётся из переменной окружения, имя которой задано в api_key_env.
+
+llm:
+  # Любой OpenAI-совместимый endpoint (/chat/completions):
+  #   OpenAI:        https://api.openai.com/v1
+  #   HF router:     https://router.huggingface.co/v1   (модель вида "Qwen/Qwen2.5-7B-Instruct")
+  #   Ollama:        http://localhost:11434/v1
+  #   vLLM/LM Studio, корпоративный шлюз — то же самое.
+  base_url: https://api.openai.com/v1
+  model: gpt-4o-mini
+  api_key_env: LLM_API_KEY
+  temperature: 0.0
+  timeout_s: 60
+  max_retries: 3
+  batch_size: 20          # комментариев в одном вызове очистки/классификации
+  rate_limit_rpm: 0       # >0 — не чаще N запросов в минуту (бесплатные тарифы: Groq ~30, Gemini free 10–15)
+  json_mode: true         # просить JSON через response_format; если endpoint отвечает 400 — отключается автоматически
+  max_tokens: 2048        # лимит длины ответа
+  extra_body: {}          # добавки в тело запроса, например {"chat_template_kwargs": {"enable_thinking": false}} для Qwen3
+  strip_thinking: true    # вырезать <think>…</think> из ответов рассуждающих моделей
+  message_suffix: ""      # дописать к последнему сообщению, например " /no_think" для Qwen3
+
+embedding:
+  backend: hybrid         # tfidf | navec | hybrid (tfidf+navec, офлайн) | st (sentence-transformers: нужна модель ниже)
+  model: intfloat/multilingual-e5-small   # только для backend: st; менять на корпоративную модель при необходимости
+  device: cpu
+  batch_size: 64
+
+cluster:
+  method: umap_hdbscan    # umap_hdbscan (схема BERTopic) | bertopic (через библиотеку) | agglomerative
+  min_cluster_size: null  # null = max(8, sqrt(n)/2)
+  max_topics: null        # укрупнять до стольких тем слиянием близких центроидов (null — не укрупнять; на тестовых данных укрупнение снижает чистоту тем)
+  merge_threshold: 0.9    # сливать кластеры со сходством центроидов выше
+  outlier_threshold: 0.35 # выбросы HDBSCAN отдаются ближайшей теме, если сходство выше; иначе «прочее»
+
+preclass:
+  threshold: 0.5          # порог отбора по смыслу (вопрос → выборка); ниже — шире выборка
+
+cache:
+  dir: .cache             # ответы LLM и эмбеддинги кэшируются по хэшу входа

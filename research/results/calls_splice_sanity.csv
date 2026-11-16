@@ -1,0 +1,4 @@
+model,cos_spliced_vs_own_original_median,cos_two_normal_same_topic_median,cos_two_normal_same_topic_p10
+rubert-tiny2,0.96,0.907,0.864
+e5-small,0.965,0.922,0.9
+user-base,0.91,0.687,0.567

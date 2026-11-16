@@ -1,0 +1,12 @@
+# OpenRouter (openrouter.ai): модели с суффиксом :free — 50 запросов/день без пополнения. Имя модели взять из их списка.
+# Запуск: lurker --config configs/openrouter.yaml llmcheck ; ключ — в переменной окружения LLM_API_KEY
+llm:
+  base_url: https://openrouter.ai/api/v1
+  model: qwen/qwen3-32b:free
+  api_key_env: LLM_API_KEY
+  temperature: 0.0
+  timeout_s: 90
+  max_retries: 4
+  batch_size: 15
+  rate_limit_rpm: 10
+  json_mode: true

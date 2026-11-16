@@ -1,0 +1,13 @@
+# Google Gemini API, бесплатный тариф (ключ: aistudio.google.com → Get API key). OpenAI-совместимый endpoint.
+# Лимиты free: примерно 10–15 запросов/мин и сотни–1000 запросов/день в зависимости от модели — проверить в консоли.
+# Запуск: lurker --config configs/gemini.yaml llmcheck ; ключ — в переменной окружения LLM_API_KEY
+llm:
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: gemini-2.5-flash-lite
+  api_key_env: LLM_API_KEY
+  temperature: 0.0
+  timeout_s: 90
+  max_retries: 4
+  batch_size: 15
+  rate_limit_rpm: 10
+  json_mode: true
